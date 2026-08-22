@@ -74,6 +74,18 @@ func Duration(d time.Duration) string {
 	}
 }
 
+// Ago formats how long ago an instant was.
+//
+// A gap below one second reads as "just now" rather than borrowing Duration's
+// dash, which stands for "unknown" and would misdescribe a measurement that was
+// in fact taken a moment ago.
+func Ago(d time.Duration) string {
+	if d < time.Second {
+		return "just now"
+	}
+	return Duration(d) + " ago"
+}
+
 // Truncate shortens s to width, marking the cut with an ellipsis. Paths are cut
 // from the left, because the tail of a path identifies it and the head rarely
 // does.

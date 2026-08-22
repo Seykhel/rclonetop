@@ -92,19 +92,79 @@ func (p Process) Uptime() time.Duration {
 	return time.Since(p.StartedAt)
 }
 
+// Mount is an active rclone FUSE mount.
+type Mount struct {
+	Remote     string // the remote spec being served, e.g. "gdrive:"
+	Mountpoint string
+	FSType     string // "fuse.rclone" and its variants
+	Source     Source
+}
+
+// CacheDir is a local directory rclone caches into. Its size is the part of a
+// remote that is actually costing disk here, which is the question "how much
+// space is this using" usually means on the local side.
+type CacheDir struct {
+	Kind      string // the subdirectory under rclone's cache root: vfs, vfsMeta, ...
+	Path      string
+	Bytes     uint64
+	Files     int
+	ScannedAt time.Time
+}
+
+// SyncSide is one end of a bisync pair, as recorded in its cached listing.
+type SyncSide struct {
+	Label string // the side's name as bisync mangles it into the filename
+	Files int
+	Bytes uint64
+}
+
+// SyncPair is a bisync session reconstructed from the listings rclone leaves in
+// its cache directory.
+//
+// This is the cheapest real answer to "how many files are synchronised and how
+// much space do they take": the listings are a complete census of both sides,
+// already on local disk, so reading them costs no API calls and no network.
+// The catch is that they describe the last run, not this instant.
+type SyncPair struct {
+	Name        string
+	Left, Right SyncSide
+
+	// Drift is the number of paths that differ between the two sides: present
+	// on one only, or present on both at different sizes. Zero means the last
+	// run left the two ends agreeing.
+	Drift int
+
+	// ListedAt is when bisync wrote the listing, taken from its header. It is
+	// therefore the time of the last run that got far enough to list.
+	ListedAt time.Time
+
+	// FailedAt is set when a .lst-err file is present, which is how bisync
+	// records that a run did not finish cleanly. It outlives the run, so a
+	// stale one means "the last failure was then", not "it is failing now".
+	FailedAt time.Time
+
+	Source Source
+}
+
 // Snapshot is one observation of rclone activity by a single collector. A
-// collector only fills the fields it knows about; the rest stay zero and are
+// collector only fills the fields it knows about; the rest stay nil and are
 // filled in by other collectors covering the same moment.
 type Snapshot struct {
 	At        time.Time
 	Source    Source
 	Processes []Process
+	Mounts    []Mount
+	Caches    []CacheDir
+	SyncPairs []SyncPair
 }
 
 // State is the merged view the UI renders, assembled from the most recent
 // snapshot of each collector.
 type State struct {
 	Processes []Process
+	Mounts    []Mount
+	Caches    []CacheDir
+	SyncPairs []SyncPair
 
 	// Seen records the last time each collector reported successfully, so
 	// the UI can tell "nothing is happening" apart from "this source went
@@ -131,8 +191,20 @@ func NewState() *State {
 // (srcFs,dstFs) pair) arrives with the collectors that can actually describe
 // the same job twice.
 func (s *State) Apply(snap Snapshot) {
+	// A nil slice means "this collector has nothing to say about that", an
+	// empty one means "it looked and found none". Only the latter should clear
+	// what is on screen.
 	if snap.Processes != nil {
 		s.Processes = snap.Processes
+	}
+	if snap.Mounts != nil {
+		s.Mounts = snap.Mounts
+	}
+	if snap.Caches != nil {
+		s.Caches = snap.Caches
+	}
+	if snap.SyncPairs != nil {
+		s.SyncPairs = snap.SyncPairs
 	}
 	s.Seen[snap.Source] = snap.At
 	delete(s.Errors, snap.Source)

@@ -39,8 +39,24 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			continue
 		}
 
-		if len(snap.Processes) == 0 {
-			fmt.Fprintln(w, "   no rclone processes found")
+		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+len(snap.SyncPairs) == 0 {
+			fmt.Fprintln(w, "   nothing found")
+		}
+		for _, mnt := range snap.Mounts {
+			fmt.Fprintf(w, "   mount %s → %q (%s)\n", mnt.Remote, mnt.Mountpoint, mnt.FSType)
+		}
+		for _, c := range snap.Caches {
+			fmt.Fprintf(w, "   cache %s  %s in %d files  %q\n",
+				c.Kind, ui.Bytes(c.Bytes, base10), c.Files, c.Path)
+		}
+		for _, p := range snap.SyncPairs {
+			fmt.Fprintf(w, "   sync %q\n", p.Name)
+			fmt.Fprintf(w, "      left  %-28s %6d files  %s\n",
+				p.Left.Label, p.Left.Files, ui.Bytes(p.Left.Bytes, base10))
+			fmt.Fprintf(w, "      right %-28s %6d files  %s\n",
+				p.Right.Label, p.Right.Files, ui.Bytes(p.Right.Bytes, base10))
+			fmt.Fprintf(w, "      drift %d  listed %s  failed %s\n",
+				p.Drift, stamp(p.ListedAt), stamp(p.FailedAt))
 		}
 		for _, p := range snap.Processes {
 			fmt.Fprintf(w, "   pid %d  kind %s  remotes %v  target %q\n",
@@ -55,4 +71,13 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		}
 	}
 	return nil
+}
+
+// stamp formats a timestamp for the dump, distinguishing "never" from a real
+// instant so an empty field is not read as the zero time.
+func stamp(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return t.Format(time.RFC3339)
 }

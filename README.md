@@ -18,8 +18,14 @@ BISYNC ~/Documents → gdrive:Documents
   pid 193345 · up 4m36s · rss 85 MiB · thr 13
   ↓ 82 KiB/s      ↑ 12 KiB/s      ·  rd 3.5 MiB · wr 2.9 MiB
 
+SYNC   home_user_Documents ⇄ gdrive_Documents
+  4710 files 5.0 GiB  ⇄  4710 files 5.0 GiB
+  in sync · listed 21m46s ago · last failure 4h51m ago
+
+CACHE  vfs 47 MiB (326 files) · vfsMeta 1.6 MiB (404 files) · scanned 2s ago
+
 ────────────────────────────────────────────────────────────────────────
-sources proc                                          1000ms  q quit
+sources bisync · localfs · proc                       1000ms  q quit
 ```
 
 ## Why another rclone TUI
@@ -40,8 +46,8 @@ rclonetop reads from whatever is available instead:
 |---|---|---|
 | `/proc` | running processes, their operands, memory, and throughput from the kernel's byte counters | done |
 | btop themes | the colour scheme, read from the themes already installed for btop | done |
-| bisync listings | files and bytes on each side, drift, last successful run | planned |
-| local filesystem | `fuse.rclone` mounts, VFS cache size | planned |
+| bisync listings | files and bytes on each side, drift, last run and last failure | done |
+| local filesystem | `fuse.rclone` mounts, and the disk the caches occupy | done |
 | systemd / journald | unit state, last exit status, next timer elapse, errors | planned |
 | rclone logs | job progress from `--log-file`, plain or `--use-json-log` | planned |
 | rc API | exact statistics, when a daemon does expose it | planned |
@@ -61,8 +67,8 @@ that *access to the rc API is equivalent to shell access as the rclone user*.
 
 ## Status
 
-Early. The process collector and the theme engine work; the rest of the table
-above is not written yet. The command line and the configuration keys are
+Early. Four of the seven sources above work; systemd, the log parser and the rc
+client are not written yet. The command line and the configuration keys are
 expected to stay as they are, but nothing is promised before 1.0.
 
 Linux only for now — throughput is measured from `/proc/<pid>/io`, which has no

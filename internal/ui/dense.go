@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -44,10 +45,16 @@ func (m Model) renderDense() string {
 	b.WriteString("\n\n")
 
 	procs := append([]model.Process(nil), m.state.Processes...)
-	if len(procs) == 0 {
+	switch {
+	case len(m.state.Seen) == 0:
+		// Before any collector has reported, "nothing is running" would be a
+		// claim rclonetop has not yet checked.
+		b.WriteString(m.style("inactive_fg").Render("collecting…"))
+		b.WriteString("\n")
+	case len(procs) == 0:
 		b.WriteString(m.style("inactive_fg").Render("no rclone process running"))
 		b.WriteString("\n")
-	} else {
+	default:
 		// Long-lived services first, then the busiest: a mount that is always
 		// there should not jump around as one-shot jobs come and go.
 		sort.SliceStable(procs, func(i, j int) bool {
@@ -65,9 +72,143 @@ func (m Model) renderDense() string {
 		}
 	}
 
+	for _, mnt := range m.orphanMounts() {
+		b.WriteString("\n")
+		b.WriteString(m.denseOrphanMount(mnt, width))
+	}
+	for _, pair := range m.state.SyncPairs {
+		b.WriteString("\n")
+		b.WriteString(m.denseSyncPair(pair, width))
+	}
+	if line := m.denseCaches(); line != "" {
+		b.WriteString("\n")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
 	b.WriteString("\n")
 	b.WriteString(m.denseFooter(width))
 	return b.String()
+}
+
+// orphanMounts are FUSE mounts with no live rclone process behind them. That
+// combination is a real failure mode -- the process died and left the
+// mountpoint wedged -- and it is invisible to a process listing alone.
+func (m Model) orphanMounts() []model.Mount {
+	if len(m.state.Mounts) == 0 {
+		return nil
+	}
+	served := make(map[string]bool, len(m.state.Processes))
+	for _, p := range m.state.Processes {
+		if p.Kind == model.KindMount {
+			served[p.Target] = true
+		}
+	}
+
+	var orphans []model.Mount
+	for _, mnt := range m.state.Mounts {
+		if !served[mnt.Mountpoint] {
+			orphans = append(orphans, mnt)
+		}
+	}
+	return orphans
+}
+
+// denseOrphanMount renders a mount whose process is gone.
+func (m Model) denseOrphanMount(mnt model.Mount, width int) string {
+	head := lipgloss.NewStyle().
+		Foreground(m.opts.Theme.Color("net_box").Lipgloss()).
+		Bold(true).
+		Render(fmt.Sprintf("%-7s", "MOUNT"))
+
+	head += m.style("proc_misc").Render(mnt.Remote) +
+		m.style("div_line").Render(" → ") +
+		m.style("main_fg").Render(Truncate(shortenHome(mnt.Mountpoint), width-lipgloss.Width(head)-16, true))
+
+	warn := "  " + m.style("hi_fg").Render("mounted, but no rclone process is serving it")
+	return head + "\n" + warn + "\n"
+}
+
+// denseSyncPair renders a bisync session from its cached listings.
+func (m Model) denseSyncPair(p model.SyncPair, width int) string {
+	head := lipgloss.NewStyle().
+		Foreground(m.opts.Theme.Color("mem_box").Lipgloss()).
+		Bold(true).
+		Render(fmt.Sprintf("%-7s", "SYNC"))
+
+	left, right := p.Left.Label, p.Right.Label
+	room := (width - lipgloss.Width(head) - 4) / 2
+	head += m.style("main_fg").Render(Truncate(left, room, true)) +
+		m.style("div_line").Render(" ⇄ ") +
+		m.style("main_fg").Render(Truncate(right, room, true))
+
+	// The two censuses, side by side. Equal counts and equal totals are the
+	// quickest visual confirmation that a pair is healthy.
+	sizes := "  " +
+		m.side(p.Left) +
+		m.style("div_line").Render("  ⇄  ") +
+		m.side(p.Right)
+
+	var status []string
+	if p.Drift == 0 && p.Left.Files > 0 {
+		status = append(status, m.gradientStyle("free", 1).Render("in sync"))
+	} else if p.Drift > 0 {
+		status = append(status, m.style("hi_fg").Render(fmt.Sprintf("%d differing", p.Drift)))
+	}
+	if !p.ListedAt.IsZero() {
+		status = append(status, m.style("inactive_fg").Render("listed ")+
+			m.style("main_fg").Render(Ago(m.now.Sub(p.ListedAt))))
+	}
+	if !p.FailedAt.IsZero() {
+		status = append(status, m.style("hi_fg").Render("last failure "+Ago(m.now.Sub(p.FailedAt))))
+	}
+
+	line := head + "\n" + sizes + "\n"
+	if len(status) > 0 {
+		line += "  " + strings.Join(status, m.style("div_line").Render(" · ")) + "\n"
+	}
+	return line
+}
+
+// side renders one end's census.
+func (m Model) side(s model.SyncSide) string {
+	return m.style("main_fg").Render(fmt.Sprint(s.Files)) +
+		m.style("inactive_fg").Render(" files ") +
+		m.gradientStyle("used", 0.35).Render(Bytes(s.Bytes, m.opts.Base10))
+}
+
+// denseCaches renders rclone's local cache footprint on a single line.
+func (m Model) denseCaches() string {
+	if len(m.state.Caches) == 0 {
+		return ""
+	}
+
+	head := lipgloss.NewStyle().
+		Foreground(m.opts.Theme.Color("cpu_box").Lipgloss()).
+		Bold(true).
+		Render(fmt.Sprintf("%-7s", "CACHE"))
+
+	var parts []string
+	var scannedAt time.Time
+	for _, c := range m.state.Caches {
+		parts = append(parts,
+			m.style("inactive_fg").Render(c.Kind+" ")+
+				m.gradientStyle("cached", 0.6).Render(Bytes(c.Bytes, m.opts.Base10))+
+				m.style("inactive_fg").Render(fmt.Sprintf(" (%d files)", c.Files)))
+		if c.ScannedAt.After(scannedAt) {
+			scannedAt = c.ScannedAt
+		}
+	}
+
+	line := head + strings.Join(parts, m.style("div_line").Render(" · "))
+	if !scannedAt.IsZero() {
+		// The walk is expensive and therefore infrequent, so the figures are
+		// always somewhat stale. Saying how stale is the honest way to show
+		// them.
+		line += m.style("div_line").Render(" · ") +
+			m.style("inactive_fg").Render("scanned "+Ago(m.now.Sub(scannedAt)))
+	}
+	return line
 }
 
 func isService(k model.Kind) bool {

@@ -77,6 +77,8 @@ func run() error {
 
 	collectors := []collect.Collector{
 		collect.NewProcs(),
+		collect.NewBisync(),
+		collect.NewLocalFS(),
 	}
 
 	if flags.debug {
