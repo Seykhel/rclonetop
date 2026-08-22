@@ -7,7 +7,11 @@
 // why every value carries its Source.
 package model
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Source identifies the collector a piece of data came from. It travels with
 // the data so the UI can mark a value as inferred rather than measured: a byte
@@ -76,6 +80,12 @@ type Process struct {
 	// happens for processes owned by another user. Without it the rates are
 	// meaningless and the UI shows a placeholder rather than a fake zero.
 	IOAvailable bool
+
+	// Unit is the systemd unit that owns this process, read from its cgroup.
+	// It is the only signal that attributes a unit whose ExecStart names a
+	// wrapper script: whatever the unit file says, the rclone it spawns lands
+	// in the unit's own cgroup.
+	Unit string
 
 	// RCAddr is the address this process serves the rc API on, if it was
 	// started with --rc-addr. It is how the rc collector finds daemons to
@@ -146,6 +156,157 @@ type SyncPair struct {
 	Source Source
 }
 
+// LogLine is one journal entry worth showing.
+type LogLine struct {
+	At       time.Time
+	Priority int // syslog severity: 3 is err, 4 warning
+	Message  string
+}
+
+// Unit is a systemd service or timer that drives rclone.
+//
+// Most rclone runs on a schedule, and by the time anyone looks the job has
+// exited. A process listing therefore cannot answer the question people
+// actually have, which is "did my backup run, and did it work". The unit's
+// recorded result can.
+type Unit struct {
+	Name  string
+	Scope string // "user" or "system"
+
+	ActiveState string // active, inactive, failed, activating
+	SubState    string // running, dead, exited, start
+	Result      string // success, exit-code, signal, timeout
+
+	// ExitStatus is si_status from waitid, and ExitCode is si_code. The pair
+	// has to be read together: ExitStatus is an exit code only when ExitCode
+	// says the process exited (CLD_EXITED, 1). When it says the process was
+	// killed (CLD_KILLED, 2) the same number is a signal, and reporting "exit
+	// 15" for a unit systemd stopped normally is both the wrong quantity and a
+	// false alarm.
+	ExitStatus int
+	ExitCode   string
+
+	// InactiveExit is when the unit left the inactive state, which is when the
+	// current or most recent run began. It is the only such record for a pure
+	// Type=oneshot: systemd never sets ActiveEnterTimestamp for one.
+	InactiveExit  time.Time
+	ActiveEnter   time.Time
+	InactiveEnter time.Time
+	MainPID       int
+
+	// Triggers is set on a timer: the unit it starts. LastTrigger and
+	// NextElapse come from systemctl's own arithmetic rather than from the
+	// boot-relative monotonic fields, which are empty for calendar timers.
+	Triggers    string
+	LastTrigger time.Time
+	NextElapse  time.Time
+
+	// Errors are the recent journal entries at warning severity or worse.
+	Errors []LogLine
+
+	Source Source
+}
+
+// IsTimer reports whether this unit schedules another.
+func (u Unit) IsTimer() bool { return strings.HasSuffix(u.Name, ".timer") }
+
+// waitid si_code values, as systemd reports them in ExecMainCode.
+const (
+	exitedNormally = "1" // CLD_EXITED: ExitStatus is an exit code
+	killedBySignal = "2" // CLD_KILLED: ExitStatus is a signal number
+	dumpedCore     = "3" // CLD_DUMPED
+)
+
+// Exit describes how the unit's main process ended, or an empty string when it
+// ended in no notable way.
+func (u Unit) Exit() string {
+	switch u.ExitCode {
+	case exitedNormally:
+		if u.ExitStatus == 0 {
+			return ""
+		}
+		return "exit " + strconv.Itoa(u.ExitStatus)
+	case killedBySignal, dumpedCore:
+		name := signalName(u.ExitStatus)
+		if u.ExitCode == dumpedCore {
+			return name + ", core dumped"
+		}
+		return "killed by " + name
+	default:
+		return ""
+	}
+}
+
+// signalName renders the signals a long-running transfer actually meets. The
+// rest are rare enough that the number is a better answer than a wrong name.
+func signalName(n int) string {
+	switch n {
+	case 1:
+		return "SIGHUP"
+	case 2:
+		return "SIGINT"
+	case 9:
+		return "SIGKILL"
+	case 15:
+		return "SIGTERM"
+	default:
+		return "signal " + strconv.Itoa(n)
+	}
+}
+
+// Running reports whether the unit is up now.
+//
+// systemd holds a Type=oneshot unit at "activating" for the whole of its
+// ExecStart, so a backup that is running right now is never "active". And a
+// oneshot with RemainAfterExit=yes settles at active/exited, which systemd
+// counts as active even though nothing is executing.
+func (u Unit) Running() bool {
+	return u.ActiveState == "activating" ||
+		(u.ActiveState == "active" && u.SubState != "exited")
+}
+
+// Active reports whether systemd considers the unit active in any sub-state,
+// including a finished oneshot held active by RemainAfterExit.
+func (u Unit) Active() bool {
+	return u.ActiveState == "active" || u.ActiveState == "activating" ||
+		u.ActiveState == "reloading"
+}
+
+// LastRun is when the unit's most recent run began or ended.
+//
+// The choice is state-dependent. InactiveEnterTimestamp records the last
+// transition into inactive, which for an active unit is a leftover from an
+// earlier cycle and can be more recent than the run actually in progress.
+
+func (u Unit) LastRun(timerTrigger time.Time) time.Time {
+	if u.Active() {
+		// The run in progress began when the unit left inactive. Preferring
+		// ActiveEnter here would report nothing at all for a oneshot, and
+		// falling through to InactiveEnter would time the gap since the
+		// *previous* run -- a number that grows with every cycle of the timer.
+		if !u.InactiveExit.IsZero() {
+			return u.InactiveExit
+		}
+		if !u.ActiveEnter.IsZero() {
+			return u.ActiveEnter
+		}
+	}
+	if !u.InactiveEnter.IsZero() {
+		return u.InactiveEnter
+	}
+	if !u.ActiveEnter.IsZero() {
+		return u.ActiveEnter
+	}
+	return timerTrigger
+}
+
+// Failed reports whether the unit's last run ended badly. systemd keeps a
+// oneshot job "inactive" whether it succeeded or not, so the state alone does
+// not answer the question; Result does.
+func (u Unit) Failed() bool {
+	return u.ActiveState == "failed" || (u.Result != "" && u.Result != "success")
+}
+
 // Snapshot is one observation of rclone activity by a single collector. A
 // collector only fills the fields it knows about; the rest stay nil and are
 // filled in by other collectors covering the same moment.
@@ -156,6 +317,7 @@ type Snapshot struct {
 	Mounts    []Mount
 	Caches    []CacheDir
 	SyncPairs []SyncPair
+	Units     []Unit
 }
 
 // State is the merged view the UI renders, assembled from the most recent
@@ -165,6 +327,7 @@ type State struct {
 	Mounts    []Mount
 	Caches    []CacheDir
 	SyncPairs []SyncPair
+	Units     []Unit
 
 	// Seen records the last time each collector reported successfully, so
 	// the UI can tell "nothing is happening" apart from "this source went
@@ -205,6 +368,9 @@ func (s *State) Apply(snap Snapshot) {
 	}
 	if snap.SyncPairs != nil {
 		s.SyncPairs = snap.SyncPairs
+	}
+	if snap.Units != nil {
+		s.Units = snap.Units
 	}
 	s.Seen[snap.Source] = snap.At
 	delete(s.Errors, snap.Source)

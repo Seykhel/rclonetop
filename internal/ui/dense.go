@@ -78,6 +78,10 @@ func (m Model) renderDense() string {
 		b.WriteString("\n")
 		b.WriteString(m.denseSyncPair(pair, width))
 	}
+	if line := m.denseUnits(width); line != "" {
+		b.WriteString("\n")
+		b.WriteString(line)
+	}
 	if line := m.denseCaches(); line != "" {
 		b.WriteString("\n")
 		b.WriteString(line)
@@ -86,7 +90,13 @@ func (m Model) renderDense() string {
 
 	b.WriteString("\n")
 	b.WriteString(m.denseFooter(width))
-	return b.String()
+
+	// A final clamp, applied once for every section rather than trusted to
+	// each one's own arithmetic. Some content genuinely cannot fit a very
+	// narrow terminal -- the fixed labels alone outgrow thirty columns -- and
+	// a line that wraps corrupts the layout of everything below it. lipgloss
+	// cuts without breaking the escape sequences.
+	return lipgloss.NewStyle().MaxWidth(width).Render(b.String())
 }
 
 // orphanMounts are FUSE mounts with no live rclone process behind them. That

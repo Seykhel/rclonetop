@@ -83,10 +83,18 @@ func run() error {
 
 	host, _ := os.Hostname()
 
+	// The systemd collector cannot tell which units drive rclone when they run
+	// it from a wrapper script. A live rclone's cgroup names its unit exactly,
+	// so the process collector feeds it that as it goes.
+	systemd := collect.NewSystemd()
+	procs := collect.NewProcs()
+	procs.OnProcesses(systemd.NoteProcesses)
+
 	collectors := []collect.Collector{
-		collect.NewProcs(),
+		procs,
 		collect.NewBisync(),
 		collect.NewLocalFS(),
+		systemd,
 	}
 
 	if flags.debug {

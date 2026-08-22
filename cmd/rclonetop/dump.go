@@ -39,7 +39,7 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			continue
 		}
 
-		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+len(snap.SyncPairs) == 0 {
+		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+len(snap.SyncPairs)+len(snap.Units) == 0 {
 			fmt.Fprintln(w, "   nothing found")
 		}
 		for _, mnt := range snap.Mounts {
@@ -48,6 +48,21 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		for _, c := range snap.Caches {
 			fmt.Fprintf(w, "   cache %s  %s in %d files  %q\n",
 				c.Kind, ui.Bytes(c.Bytes, base10), c.Files, c.Path)
+		}
+		for _, u := range snap.Units {
+			fmt.Fprintf(w, "   unit %s (%s)  %s/%s  result=%s status=%d\n",
+				u.Name, u.Scope, u.ActiveState, u.SubState, u.Result, u.ExitStatus)
+			if !u.ActiveEnter.IsZero() || !u.InactiveEnter.IsZero() {
+				fmt.Fprintf(w, "      active since %s  inactive since %s\n",
+					stamp(u.ActiveEnter), stamp(u.InactiveEnter))
+			}
+			if u.IsTimer() {
+				fmt.Fprintf(w, "      triggers %s  last %s  next %s\n",
+					u.Triggers, stamp(u.LastTrigger), stamp(u.NextElapse))
+			}
+			for _, e := range u.Errors {
+				fmt.Fprintf(w, "      [%d] %s %s\n", e.Priority, stamp(e.At), e.Message)
+			}
 		}
 		for _, p := range snap.SyncPairs {
 			fmt.Fprintf(w, "   sync %q\n", p.Name)

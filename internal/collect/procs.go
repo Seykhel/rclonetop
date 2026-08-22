@@ -37,8 +37,9 @@ type Procs struct {
 	// fixture directory instead of the live kernel.
 	root string
 
-	bootTime time.Time
-	prev     map[int]ioSample
+	bootTime  time.Time
+	prev      map[int]ioSample
+	observers []func([]model.Process)
 }
 
 // ioSample is the previous reading of a process's byte counters, kept so the
@@ -118,6 +119,10 @@ func (p *Procs) Collect(ctx context.Context) (model.Snapshot, error) {
 		}
 	}
 
+	for _, fn := range p.observers {
+		fn(procs)
+	}
+
 	return model.Snapshot{At: now, Source: model.SourceProc, Processes: procs}, nil
 }
 
@@ -146,6 +151,9 @@ func (p *Procs) readProcess(pid int, now time.Time) (model.Process, bool) {
 	proc.RCAddr = parseRCAddr(args)
 	proc.StartedAt = p.startTime(dir)
 	proc.RSS, proc.Threads = readStatus(filepath.Join(dir, "status"))
+	if raw, err := os.ReadFile(filepath.Join(dir, "cgroup")); err == nil {
+		proc.Unit = unitFromCgroup(string(raw))
+	}
 
 	rd, wr, ok := readIO(filepath.Join(dir, "io"))
 	proc.IOAvailable = ok
@@ -424,4 +432,14 @@ func parseRCAddr(args []string) string {
 		}
 	}
 	return ""
+}
+
+// OnProcesses registers a callback invoked with each fresh set of discovered
+// processes.
+//
+// It exists so the systemd collector can learn which units own rclone from
+// their cgroups. That attribution is only possible while a process is alive,
+// and only the process collector is looking at the right moment.
+func (p *Procs) OnProcesses(fn func([]model.Process)) {
+	p.observers = append(p.observers, fn)
 }

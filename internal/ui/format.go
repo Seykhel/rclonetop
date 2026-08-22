@@ -89,9 +89,17 @@ func Ago(d time.Duration) string {
 // Truncate shortens s to width, marking the cut with an ellipsis. Paths are cut
 // from the left, because the tail of a path identifies it and the head rarely
 // does.
+//
+// A width of zero or less yields nothing. Returning the whole string there --
+// as this did -- turns every arithmetic slip in a caller's budget into an
+// overflowing line, silently and only on narrow terminals: a journal message
+// rendered at a computed width of -5 came out at a hundred and sixty columns.
 func Truncate(s string, width int, fromLeft bool) string {
+	if width <= 0 {
+		return ""
+	}
 	r := []rune(s)
-	if width <= 0 || len(r) <= width {
+	if len(r) <= width {
 		return s
 	}
 	if width == 1 {

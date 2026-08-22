@@ -22,10 +22,17 @@ SYNC   home_user_Documents ⇄ gdrive_Documents
   4710 files 5.0 GiB  ⇄  4710 files 5.0 GiB
   in sync · listed 21m46s ago · last failure 4h51m ago
 
+UNIT   jd-bisync  idle
+  last 2m0s ago · next in 28m0s
+  ! 5h1m ago  jd-bisync.service: Main process exited, code=killed, status=15…
+    and 3 more recent
+UNIT   rclone-mount  running
+  running for 11h43m
+
 CACHE  vfs 47 MiB (326 files) · vfsMeta 1.6 MiB (404 files) · scanned 2s ago
 
 ────────────────────────────────────────────────────────────────────────────────
-sources bisync · localfs · proc                             700ms  q quit
+sources bisync · localfs · proc · systemd                   700ms  q quit
 ```
 
 ## Why another rclone TUI
@@ -48,7 +55,7 @@ rclonetop reads from whatever is available instead:
 | btop themes | the colour scheme, read from the themes already installed for btop | done |
 | bisync listings | files and bytes on each side, drift, last run and last failure | done |
 | local filesystem | `fuse.rclone` mounts, and the disk the caches occupy | done |
-| systemd / journald | unit state, last exit status, next timer elapse, errors | planned |
+| systemd / journald | unit state, how the last run ended, next timer elapse, errors | done |
 | rclone logs | job progress from `--log-file`, plain or `--use-json-log` | planned |
 | rc API | exact statistics, when a daemon does expose it | planned |
 
@@ -67,15 +74,25 @@ the peak.
 rclonetop never writes anything. It does not change rclone's configuration,
 start or stop transfers, touch remotes, or control systemd units.
 
-Discovery of rc endpoints reads command lines that are already on the host and
-never scans the network. This is deliberate: rclone's own documentation notes
-that *access to the rc API is equivalent to shell access as the rclone user*.
+It does read more of the host than a monitor might be expected to, so here is
+the whole of it:
+
+- **Subprocesses.** `systemctl` and `journalctl` are invoked every few seconds,
+  with read-only subcommands, to learn unit state and recent errors. No D-Bus
+  library, no shell: arguments are passed directly.
+- **Wrapper scripts.** A unit that runs rclone from a shell script never names
+  it, so the script itself is read to decide whether the unit is relevant. This
+  is bounded to regular files under 256 KiB that begin with a shebang, and only
+  for units systemd already lists.
+- **rc endpoints.** Discovery reads command lines that are already on the host
+  and never scans the network. rclone's own documentation notes that *access to
+  the rc API is equivalent to shell access as the rclone user*.
 
 ## Status
 
-Early. Four of the seven sources above work; systemd, the log parser and the rc
-client are not written yet. The command line and the configuration keys are
-expected to stay as they are, but nothing is promised before 1.0.
+Early. Five of the seven sources above work; the log parser and the rc client
+are not written yet. The command line and the configuration keys are expected to
+stay as they are, but nothing is promised before 1.0.
 
 Linux only for now — throughput is measured from `/proc/<pid>/io`, which has no
 direct equivalent on macOS or the BSDs.
@@ -174,8 +191,14 @@ go test ./...
 go vet ./...
 ```
 
-The collectors are tested against fixtures rather than the live system, so the
-suite does not depend on what happens to be running.
+The collectors are tested against fixtures rather than the live system: a fake
+procfs on a temporary directory, canned `systemctl` and `journalctl` output, and
+real log and listing formats captured from a working setup. The suite therefore
+does not depend on what happens to be running.
+
+Run it with `-race`. The process collector feeds unit ownership to the systemd
+collector across a goroutine boundary, and that seam is covered by a test that
+only fails under the race detector.
 
 ## Licence
 
