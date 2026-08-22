@@ -87,7 +87,11 @@ func (p *Procs) Collect(ctx context.Context) (model.Snapshot, error) {
 		return model.Snapshot{}, err
 	}
 
-	var procs []model.Process
+	// Non-nil even when empty. A nil slice means "this collector has nothing
+	// to say", which State.Apply leaves alone; an empty one means "it looked
+	// and found none". Returning nil here left the last rclone process frozen
+	// on screen forever after it exited.
+	procs := []model.Process{}
 	seen := make(map[int]bool, len(p.prev))
 
 	for _, e := range entries {

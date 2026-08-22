@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/Seykhel/rclonetop/internal/series"
 )
 
 // minRateScale is the floor for the gradient's upper bound, so that a few
@@ -35,10 +36,7 @@ func boxColorFor(k model.Kind) string {
 
 // renderDense draws preset 0: the whole picture in as few lines as possible.
 func (m Model) renderDense() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
+	width := effectiveWidth(m.width)
 
 	var b strings.Builder
 	b.WriteString(m.denseHeader(width))
@@ -265,7 +263,9 @@ func (m Model) denseProcess(p model.Process, width int) string {
 	if p.IOAvailable {
 		third = "  " +
 			m.rateCell("↓", p.ReadRate, "download") +
+			m.sparkline(m.graphs.read, p.PID, "download") +
 			"  " + m.rateCell("↑", p.WriteRate, "upload") +
+			m.sparkline(m.graphs.write, p.PID, "upload") +
 			m.style("div_line").Render("  ·  ") +
 			m.style("inactive_fg").Render("rd ") + m.style("main_fg").Render(Bytes(p.ReadTotal, m.opts.Base10)) +
 			m.style("div_line").Render(" · ") +
@@ -288,6 +288,19 @@ func (m Model) rateCell(arrow string, bps float64, ramp string) string {
 	}
 	st := m.gradientStyle(ramp, bps/scale)
 	return st.Render(arrow+" ") + st.Render(fmt.Sprintf("%-12s", Rate(bps, m.opts.Base10)))
+}
+
+// sparkline draws a process's recent throughput next to its current rate.
+//
+// The glyphs are coloured at the warm end of the same ramp that grades the
+// number beside them, so the graph reads as belonging to that number rather
+// than as a second, competing signal.
+func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) string {
+	s := m.graphs.spark(rings, pid, m.opts.GraphSymbol)
+	if s == "" {
+		return ""
+	}
+	return m.gradientStyle(ramp, 0.75).Render(s)
 }
 
 // memStyle grades resident memory along the "used" ramp, saturating at 1 GiB.

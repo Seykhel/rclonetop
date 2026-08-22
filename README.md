@@ -8,15 +8,15 @@ throughput, synchronised files, space used — and it works whether or not rclon
 was started in any particular way.
 
 ```
-rclonetop 0.1.0 workstation ─────────────────────────────────────── 21:15:40
+rclonetop 0.1.0 workstation ─────────────────────────────────── 21:15:40
 
 MOUNT  gdrive: → ~/My Drive
   pid 2702 · up 11h43m · rss 75 MiB · thr 15
-  ↓ 1.4 MiB/s     ↑ 0 B/s         ·  rd 130 MiB · wr 132 MiB
+  ↓ 1.4 MiB/s   ⠀⠀⠀⠀⠀⢀⣠⣴⣾  ↑ 0 B/s       ⠀⠀⠀⠀⠀⠀⠀⠀⠀  ·  rd 130 MiB · wr 132 MiB
 
 BISYNC ~/Documents → gdrive:Documents
   pid 193345 · up 4m36s · rss 85 MiB · thr 13
-  ↓ 82 KiB/s      ↑ 12 KiB/s      ·  rd 3.5 MiB · wr 2.9 MiB
+  ↓ 82 KiB/s    ⠀⠀⠀⢠⣾⣷⣶⣤⣀  ↑ 12 KiB/s    ⠀⠀⠀⠀⠀⢀⣠⣴⣾  ·  rd 3.5 MiB · wr 2.9 MiB
 
 SYNC   home_user_Documents ⇄ gdrive_Documents
   4710 files 5.0 GiB  ⇄  4710 files 5.0 GiB
@@ -24,8 +24,8 @@ SYNC   home_user_Documents ⇄ gdrive_Documents
 
 CACHE  vfs 47 MiB (326 files) · vfsMeta 1.6 MiB (404 files) · scanned 2s ago
 
-────────────────────────────────────────────────────────────────────────
-sources bisync · localfs · proc                       1000ms  q quit
+────────────────────────────────────────────────────────────────────────────────
+sources bisync · localfs · proc                             700ms  q quit
 ```
 
 ## Why another rclone TUI
@@ -55,6 +55,12 @@ rclonetop reads from whatever is available instead:
 Sources are independent. Whatever is unavailable is hidden rather than shown as
 zero: a zero and an unreadable counter mean very different things to someone
 checking whether their backup ran.
+
+Throughput is graphed from the samples collected while rclonetop runs, in
+braille, eighth-blocks or plain ASCII. Each graph scales to the busiest moment
+in its own window, and both directions of a transfer share that scale so they
+stay comparable — but any traffic at all leaves a mark, however small next to
+the peak.
 
 ## Read-only
 
@@ -98,10 +104,11 @@ rclonetop [options]
 | Option | Meaning |
 |---|---|
 | `--theme <name>` | colour theme; btop themes are found automatically |
+| `--graph-symbol <s>` | graph glyphs: `braille`, `block` or `tty` |
 | `--theme-background` | use the theme's background colour (default true) |
 | `-u`, `--update <ms>` | refresh interval in milliseconds (default 2000) |
 | `--base-10` | size units in KB=1000 instead of KiB=1024 |
-| `-t`, `--tty` | force TTY mode: an 8-colour palette |
+| `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs unless `--graph-symbol` says otherwise |
 | `-l`, `--low-color` | limit output to 256 colours |
 | `--no-alt-screen` | draw in place instead of on the alternate screen |
 | `-d`, `--debug` | print what each collector saw, then exit |
@@ -138,6 +145,13 @@ $XDG_CONFIG_HOME/btop/themes
 /usr/local/share/btop/themes
 /usr/share/btop/themes
 ```
+
+Graphs are plotted directly rather than through a charting library: the
+requirement is narrow — btop's braille cells, degrading to eighth-blocks and
+then to plain ASCII for a Linux console — and expressing it takes less code than
+adapting a general-purpose library would, with no dependency. Each graph scales
+to the largest rate in its own window, and both directions of a transfer share
+that scale so they stay comparable.
 
 btop's colour vocabulary maps onto rclone closely enough to reuse as is:
 `download` and `upload` keep their meaning, the memory ramps (`used`, `free`,

@@ -18,6 +18,7 @@ import (
 // than not accepting it at all.
 type options struct {
 	themeName       string
+	graphSymbol     string
 	themeBackground bool
 	updateMS        int
 	base10          bool
@@ -52,6 +53,7 @@ func parseFlags(args []string) (options, error) {
 	}
 
 	str(&o.themeName, "", "theme")
+	str(&o.graphSymbol, "", "graph-symbol")
 	num(&o.updateMS, 2000, "u", "update")
 	boolean(&o.themeBackground, true, "theme-background")
 	boolean(&o.base10, false, "base-10")
@@ -72,6 +74,15 @@ func parseFlags(args []string) (options, error) {
 	if o.updateMS < 100 {
 		return o, fmt.Errorf("--update must be at least 100 ms, got %d", o.updateMS)
 	}
+	// Plot itself falls back to braille on an unrecognised symbol, which is
+	// what a configuration file written for a later version will want once
+	// there is one. A typo typed at the prompt is just a mistake, though, and
+	// ignoring it would leave the user wondering why nothing changed.
+	switch o.graphSymbol {
+	case "", "braille", "block", "tty":
+	default:
+		return o, fmt.Errorf("--graph-symbol must be braille, block or tty, got %q", o.graphSymbol)
+	}
 	return o, nil
 }
 
@@ -84,10 +95,12 @@ Usage:
 
 Options:
       --theme <name>      colour theme; btop themes are found automatically
+      --graph-symbol <s>  graph glyphs: braille, block or tty
       --theme-background  use the theme's background colour (default true)
   -u, --update <ms>       refresh interval in milliseconds (default 2000)
       --base-10           size units in KB=1000 instead of KiB=1024
-  -t, --tty               force TTY mode: an 8-colour palette
+  -t, --tty               force TTY mode: 8 colours, and ASCII graphs unless
+                          --graph-symbol says otherwise
   -l, --low-color         limit output to 256 colours
       --no-alt-screen     draw in place instead of on the alternate screen
   -d, --debug             print what each collector saw, then exit

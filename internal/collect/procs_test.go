@@ -226,3 +226,24 @@ func itoa(n int) string {
 	}
 	return string(buf)
 }
+
+// TestNoProcessesReportsEmptyNotNil covers the difference between "nothing to
+// say" and "looked and found none". A nil slice is left alone by State.Apply,
+// which froze the last rclone process on screen forever after it exited.
+func TestNoProcessesReportsEmptyNotNil(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "stat"), "btime 1787000000\n")
+	writeFile(t, filepath.Join(root, "self", "stat"), "1 (x) R 0\n")
+	writeProc(t, root, 99, "bash", []string{"/usr/bin/bash"}, "VmRSS:\t 10 kB\n", "rchar: 0\nwchar: 0\n")
+
+	snap, err := NewProcsAt(root).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if snap.Processes == nil {
+		t.Error("Processes is nil, so the previous frame would never be cleared")
+	}
+	if len(snap.Processes) != 0 {
+		t.Errorf("got %d processes, want none", len(snap.Processes))
+	}
+}

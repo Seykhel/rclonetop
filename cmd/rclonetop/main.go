@@ -19,6 +19,7 @@ import (
 	"github.com/Seykhel/rclonetop/internal/collect"
 	"github.com/Seykhel/rclonetop/internal/theme"
 	"github.com/Seykhel/rclonetop/internal/ui"
+	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
 
 func main() {
@@ -52,10 +53,17 @@ func run() error {
 	// Clamping the colour profile makes lipgloss quantise every colour down
 	// to the requested palette, so the same gradients keep working on a
 	// terminal that cannot render them at full depth.
+	symbol := graph.Symbol(flags.graphSymbol)
+
 	switch {
 	case flags.tty:
 		th = theme.TTY()
 		lipgloss.SetColorProfile(termenv.ANSI)
+		// A real console has neither the colours nor the glyphs, so forcing
+		// TTY mode has to cover both unless the symbol was set explicitly.
+		if symbol == "" {
+			symbol = graph.TTY
+		}
 	case flags.lowColor:
 		lipgloss.SetColorProfile(termenv.ANSI256)
 	}
@@ -88,10 +96,11 @@ func run() error {
 	results := collect.Run(ctx, collectors)
 
 	m := ui.New(results, ui.Options{
-		Theme:    th,
-		UpdateMS: flags.updateMS,
-		Base10:   flags.base10,
-		Host:     host,
+		Theme:       th,
+		UpdateMS:    flags.updateMS,
+		Base10:      flags.base10,
+		GraphSymbol: symbol,
+		Host:        host,
 	}, cancel)
 
 	opts := []tea.ProgramOption{tea.WithContext(ctx)}

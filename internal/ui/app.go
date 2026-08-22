@@ -16,6 +16,7 @@ import (
 	"github.com/Seykhel/rclonetop/internal/collect"
 	"github.com/Seykhel/rclonetop/internal/model"
 	"github.com/Seykhel/rclonetop/internal/theme"
+	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
 
 // Version is stamped at build time by the release tooling.
@@ -29,6 +30,7 @@ type Options struct {
 	Base10      bool
 	Host        string
 	ClockLayout string
+	GraphSymbol graph.Symbol
 }
 
 // Model is the root Bubble Tea model.
@@ -46,6 +48,10 @@ type Model struct {
 	// btop's net_auto rather than assuming a link speed rclonetop cannot
 	// know.
 	peakRate float64
+
+	// graphs holds the per-process history the sparklines are drawn from. It
+	// is a pointer because Update takes the model by value.
+	graphs *graphStore
 
 	quitting bool
 	cancel   context.CancelFunc
@@ -69,11 +75,15 @@ func New(results <-chan collect.Result, opts Options, cancel context.CancelFunc)
 	if opts.ClockLayout == "" {
 		opts.ClockLayout = "15:04:05"
 	}
+	if opts.GraphSymbol == "" {
+		opts.GraphSymbol = graph.Braille
+	}
 	return Model{
 		opts:    opts,
 		state:   model.NewState(),
 		results: results,
 		now:     time.Now(),
+		graphs:  newGraphStore(opts.GraphSymbol, sparkCellsFor(effectiveWidth(0))),
 		cancel:  cancel,
 	}
 }
@@ -104,6 +114,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// The graphs share the throughput line with fixed text, so their
+		// width -- and therefore how much history is worth keeping -- follows
+		// the terminal.
+		m.graphs.resize(sparkCellsFor(effectiveWidth(m.width)), m.opts.GraphSymbol)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -120,6 +134,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state.Apply(res.Snapshot)
 			m.trackPeak()
+			// Only the collector that reports processes advances the
+			// graphs. Sampling on every collector's tick would stretch the
+			// time axis by however many sources happen to be enabled.
+			if res.Snapshot.Processes != nil {
+				m.graphs.record(res.Snapshot.Processes)
+			}
 		}
 		return m, waitFor(m.results)
 	}
@@ -181,4 +201,22 @@ func (m Model) style(key string) lipgloss.Style {
 // theme, so callers can pass a raw ratio.
 func (m Model) gradientStyle(ramp string, frac float64) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(m.opts.Theme.Gradient(ramp, frac).Lipgloss())
+}
+
+// defaultWidth is what the dense view assumes before the terminal has reported
+// its size. Eighty columns is both the conventional default and the width the
+// layout is tuned against.
+const defaultWidth = 80
+
+// effectiveWidth resolves the width every renderer should budget against.
+//
+// A terminal can report zero, both before the first size message and from
+// harnesses that do not allocate a real one. Every consumer has to agree on
+// what that means: the renderer treating it as eighty while the graph sizing
+// treated it as "too narrow to draw" silently dropped the graphs.
+func effectiveWidth(w int) int {
+	if w <= 0 {
+		return defaultWidth
+	}
+	return w
 }
