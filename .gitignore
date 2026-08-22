@@ -1,0 +1,12 @@
+# Build output
+/bin/
+/dist/
+
+# Local configuration and state: never versioned, see rclonetop.conf.example
+# for the schema.
+/rclonetop.conf
+*.local.conf
+
+# Editor and OS noise
+.DS_Store
+*.swp
