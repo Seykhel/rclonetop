@@ -13,6 +13,8 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/Seykhel/rclonetop/internal/collect"
 	"github.com/Seykhel/rclonetop/internal/theme"
@@ -47,8 +49,15 @@ func run() error {
 		fmt.Fprintln(os.Stderr, "rclonetop:", err, "- using the built-in theme")
 		th = theme.Default()
 	}
-	if flags.tty {
+	// Clamping the colour profile makes lipgloss quantise every colour down
+	// to the requested palette, so the same gradients keep working on a
+	// terminal that cannot render them at full depth.
+	switch {
+	case flags.tty:
 		th = theme.TTY()
+		lipgloss.SetColorProfile(termenv.ANSI)
+	case flags.lowColor:
+		lipgloss.SetColorProfile(termenv.ANSI256)
 	}
 	th.SetOpaqueBackground(flags.themeBackground)
 
@@ -80,7 +89,6 @@ func run() error {
 		Theme:    th,
 		UpdateMS: flags.updateMS,
 		Base10:   flags.base10,
-		VimKeys:  flags.vimKeys,
 		Host:     host,
 	}, cancel)
 

@@ -27,7 +27,6 @@ type Options struct {
 	Theme       *theme.Theme
 	UpdateMS    int
 	Base10      bool
-	VimKeys     bool
 	Host        string
 	ClockLayout string
 }

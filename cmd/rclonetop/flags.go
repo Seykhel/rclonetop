@@ -10,15 +10,17 @@ import (
 // options holds the command line configuration.
 //
 // The short forms deliberately match btop's, so that muscle memory carries
-// over: -u for the update rate, -p for the preset, -t to force TTY mode.
+// over: -u for the update rate, -t to force TTY mode, -l to limit the palette.
+//
+// Only flags that actually do something are registered. btop's -c, -p and
+// --vim-keys arrive with the configuration file and the box presets; declaring
+// them now would mean accepting a flag and silently ignoring it, which is worse
+// than not accepting it at all.
 type options struct {
-	configPath      string
 	themeName       string
 	themeBackground bool
 	updateMS        int
-	preset          int
 	base10          bool
-	vimKeys         bool
 	tty             bool
 	lowColor        bool
 	debug           bool
@@ -49,13 +51,10 @@ func parseFlags(args []string) (options, error) {
 		}
 	}
 
-	str(&o.configPath, "", "c", "config")
 	str(&o.themeName, "", "theme")
 	num(&o.updateMS, 2000, "u", "update")
-	num(&o.preset, 0, "p", "preset")
 	boolean(&o.themeBackground, true, "theme-background")
 	boolean(&o.base10, false, "base-10")
-	boolean(&o.vimKeys, false, "vim-keys")
 	boolean(&o.tty, false, "t", "tty")
 	boolean(&o.lowColor, false, "l", "low-color")
 	boolean(&o.debug, false, "d", "debug")
@@ -84,17 +83,14 @@ Usage:
   rclonetop [options]
 
 Options:
-  -c, --config <file>     path to the configuration file
       --theme <name>      colour theme; btop themes are found automatically
       --theme-background  use the theme's background colour (default true)
   -u, --update <ms>       refresh interval in milliseconds (default 2000)
-  -p, --preset <0-9>      initial layout preset (default 0, the dense view)
       --base-10           size units in KB=1000 instead of KiB=1024
-      --vim-keys          navigate with h j k l g G
-  -t, --tty               force TTY mode: 8 colours and block graphs
+  -t, --tty               force TTY mode: an 8-colour palette
   -l, --low-color         limit output to 256 colours
       --no-alt-screen     draw in place instead of on the alternate screen
-  -d, --debug             log verbosely
+  -d, --debug             print what each collector saw, then exit
   -h, --help              show this message
   -V, --version           show the version
 
