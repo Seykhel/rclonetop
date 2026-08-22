@@ -105,6 +105,25 @@ func (t *Theme) Gradient(name string, frac float64) Color {
 	return ramp[int(frac*float64(len(ramp)-1)+0.5)]
 }
 
+// Blend mixes two colours, f running from a to b.
+//
+// It is what lets a value fade between two named theme colours rather than
+// along a ramp -- an alarm that cools towards the inactive colour as it ages,
+// for instance, which no single gradient expresses.
+func Blend(a, b Color, f float64) Color {
+	switch {
+	case !a.Set:
+		return b
+	case !b.Set:
+		return a
+	case f < 0:
+		f = 0
+	case f > 1:
+		f = 1
+	}
+	return lerp(a, b, f)
+}
+
 // SetOpaqueBackground controls whether the theme's own background is used.
 // btop calls this theme_background; turning it off lets the terminal's
 // background (and any transparency) show through.

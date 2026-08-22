@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/Seykhel/rclonetop/internal/theme"
 )
 
 // staleSuccess is how long a successful run stays reassuring. Past it the
@@ -16,6 +17,12 @@ import (
 // succeeded three days ago is not the same as one that succeeded an hour ago,
 // even though systemd calls both of them "success".
 const staleSuccess = 24 * time.Hour
+
+// errorFadeWindow is how long a journal error takes to cool from the alarm
+// colour to the inactive one. Six hours: long enough that a failure overnight
+// is still visibly a failure in the morning, short enough that it stops
+// competing with whatever is wrong now.
+const errorFadeWindow = 6 * time.Hour
 
 // denseUnits renders the systemd services and timers driving rclone.
 //
@@ -27,6 +34,13 @@ func (m Model) denseUnits(width int) string {
 	if len(m.state.Units) == 0 {
 		return ""
 	}
+
+	// A unit whose process is already on screen would otherwise be described
+	// twice, and the two descriptions would say the same thing in different
+	// words: "up 14h40m" against "running for 14h40m". The process line wins,
+	// because it carries the throughput; what only the unit knows -- its
+	// journal errors -- is moved there instead.
+	shown := m.unitsShownAsProcesses()
 
 	timers := make(map[string]model.Unit)
 	var services []model.Unit
@@ -44,11 +58,14 @@ func (m Model) denseUnits(width int) string {
 			timers[u.Triggers] = u
 			continue
 		}
+		if shown[u.Name] {
+			continue
+		}
 		services = append(services, u)
 	}
 	// Timers whose service was not itself reported still deserve a line.
 	for target, t := range timers {
-		if !hasUnit(services, target) {
+		if !shown[target] && !hasUnit(services, target) {
 			services = append(services, model.Unit{
 				Name: target, Scope: t.Scope, Source: t.Source,
 			})
@@ -73,6 +90,61 @@ func (m Model) denseUnits(width int) string {
 		b.WriteString(m.denseUnit(u, timers[u.Name], width))
 	}
 	return b.String()
+}
+
+// unitsShownAsProcesses names the units already represented by a process line.
+func (m Model) unitsShownAsProcesses() map[string]bool {
+	shown := make(map[string]bool)
+	for _, p := range m.state.Processes {
+		if p.Unit != "" {
+			shown[p.Unit] = true
+		}
+	}
+	return shown
+}
+
+// unitErrorsFor returns the journal errors of the unit that owns a process, so
+// they can be shown against the process rather than lost with its unit line.
+func (m Model) unitErrorsFor(p model.Process) []model.LogLine {
+	if p.Unit == "" {
+		return nil
+	}
+	for _, u := range m.state.Units {
+		if u.Name == p.Unit {
+			return u.Errors
+		}
+	}
+	return nil
+}
+
+// renderErrors draws the most recent journal error and a count of the rest.
+// One line: the point is to say that something went wrong and roughly when,
+// not to be a log viewer.
+//
+// The alarm colour cools towards the inactive one as the entry ages. A failure
+// from five hours ago is worth knowing about and worth keeping on screen, but
+// painting it as brightly as one from a minute ago says something untrue about
+// how urgent it is.
+func (m Model) renderErrors(errs []model.LogLine, width int) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	e := errs[len(errs)-1]
+	faded := m.fadedAlarm(e.At)
+
+	prefix := "  " + faded.Render("! ") +
+		m.style("inactive_fg").Render(Ago(m.now.Sub(e.At))+"  ")
+	room := width - lipgloss.Width(prefix)
+	if room <= 0 {
+		return ""
+	}
+
+	out := prefix + faded.Render(Truncate(oneLine(e.Message), room, false)) + "\n"
+	if n := len(errs); n > 1 {
+		out += "  " + m.style("inactive_fg").Render(
+			fmt.Sprintf("  and %d more recent", n-1)) + "\n"
+	}
+	return out
 }
 
 func hasUnit(units []model.Unit, name string) bool {
@@ -138,20 +210,7 @@ func (m Model) denseUnit(u model.Unit, timer model.Unit, width int) string {
 	}
 	line += "\n"
 
-	// The most recent journal error, if any. One line: the point is to say
-	// that something went wrong and roughly when, not to be a log viewer.
-	if len(u.Errors) > 0 {
-		e := u.Errors[len(u.Errors)-1]
-		prefix := "  " + m.style("hi_fg").Render("! ") +
-			m.style("inactive_fg").Render(Ago(m.now.Sub(e.At))+"  ")
-		if room := width - lipgloss.Width(prefix); room > 0 {
-			line += prefix + m.style("hi_fg").Render(Truncate(oneLine(e.Message), room, false)) + "\n"
-		}
-		if n := len(u.Errors); n > 1 {
-			line += "  " + m.style("inactive_fg").Render(
-				fmt.Sprintf("  and %d more recent", n-1)) + "\n"
-		}
-	}
+	line += m.renderErrors(u.Errors, width)
 
 	return line
 }
@@ -187,6 +246,19 @@ func (m Model) unitState(u model.Unit) string {
 	default:
 		return m.style("inactive_fg").Render("idle")
 	}
+}
+
+// fadedAlarm grades the alarm colour by how long ago something happened.
+func (m Model) fadedAlarm(at time.Time) lipgloss.Style {
+	frac := 0.0
+	if !at.IsZero() {
+		frac = m.now.Sub(at).Seconds() / errorFadeWindow.Seconds()
+	}
+	c := theme.Blend(
+		m.opts.Theme.Color("hi_fg"),
+		m.opts.Theme.Color("inactive_fg"),
+		frac)
+	return lipgloss.NewStyle().Foreground(c.Lipgloss())
 }
 
 // sooner reports whether a comes before b, treating "never" as last.

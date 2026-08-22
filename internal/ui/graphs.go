@@ -9,20 +9,29 @@ import (
 )
 
 const (
+	// rateFieldWidth is the column the figure is padded to. It keeps the two
+	// directions aligned so the line does not jitter as the numbers change
+	// width, and ten is enough for the widest rate worth printing ("999 MiB/s").
+	rateFieldWidth = 10
+
 	// throughputTextWidth is how many columns the throughput line needs for
 	// its text alone: the two arrows with their padded figures, the
 	// separators, and the cumulative totals. Measured from the rendered line,
 	// with headroom for totals that reach four digits.
-	throughputTextWidth = 62
+	throughputTextWidth = 58
 
 	// minSparkCells is the narrowest graph worth drawing. Below this the
 	// graphs are dropped entirely rather than squeezed, because two or three
 	// cells convey nothing and the line would still overflow.
 	minSparkCells = 6
 
-	// maxSparkCells caps the history on a very wide terminal. Beyond this the
-	// graph stops adding information and starts dominating the line.
-	maxSparkCells = 32
+	// maxSparkCells caps the history on a very wide terminal.
+	//
+	// Sixteen rather than something larger because a graph is mostly blank
+	// whenever the link is mostly idle -- which is the normal state of a mount
+	// -- and a wide one reads as a gap between the figure and its own trace
+	// rather than as a trace at all.
+	maxSparkCells = 16
 )
 
 // sparkCellsFor divides the space left over on the throughput line between the

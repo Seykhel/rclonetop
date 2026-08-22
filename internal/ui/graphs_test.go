@@ -191,15 +191,18 @@ func TestResizeFollowsTheSymbol(t *testing.T) {
 // line inside the terminal. A fixed sixteen cells pushed it to ninety-two
 // columns, which wraps on the eighty-column terminal the layout is tuned for.
 func TestSparkCellsFollowTheTerminal(t *testing.T) {
+	// Derived from the constants rather than written out, so tightening the
+	// layout does not turn this into a table of stale magic numbers.
+	narrowest := throughputTextWidth + 2*minSparkCells
+
 	tests := []struct {
 		width int
 		want  int
 	}{
-		{200, maxSparkCells}, // capped
-		{120, 29},
-		{80, 9},
-		{74, 6}, // exactly the minimum
-		{73, 0}, // below it the graphs are dropped, not squeezed
+		{1000, maxSparkCells}, // capped
+		{throughputTextWidth + 2*maxSparkCells, maxSparkCells},
+		{narrowest, minSparkCells}, // exactly the minimum
+		{narrowest - 1, 0},         // below it, dropped not squeezed
 		{40, 0},
 		{0, 0},
 		{-1, 0},
@@ -210,8 +213,14 @@ func TestSparkCellsFollowTheTerminal(t *testing.T) {
 		}
 	}
 
+	// A graph should not sprawl on a wide terminal: mostly-blank cells read as
+	// a gap between the figure and its own trace.
+	if got := sparkCellsFor(300); got > maxSparkCells {
+		t.Errorf("sparkCellsFor(300) = %d, want at most %d", got, maxSparkCells)
+	}
+
 	// The whole point: text plus both graphs must fit.
-	for _, width := range []int{74, 80, 100, 120, 200, 400} {
+	for _, width := range []int{narrowest, 80, 100, 120, 200, 400} {
 		total := throughputTextWidth + 2*sparkCellsFor(width)
 		if total > width {
 			t.Errorf("at width %d the line needs %d columns", width, total)
@@ -220,7 +229,7 @@ func TestSparkCellsFollowTheTerminal(t *testing.T) {
 }
 
 func TestNarrowTerminalDropsTheGraph(t *testing.T) {
-	g := newGraphStore(graph.Braille, sparkCellsFor(70))
+	g := newGraphStore(graph.Braille, sparkCellsFor(throughputTextWidth))
 	feed(g, 1, 1000, 1000, 4)
 	if got := g.spark(g.read, 1, graph.Braille); got != "" {
 		t.Errorf("got %q, want no graph on a narrow terminal", got)

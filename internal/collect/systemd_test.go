@@ -618,3 +618,70 @@ func TestCgroupAttributionSurvivesClassification(t *testing.T) {
 		t.Error("the negative verdict was cached over the positive one")
 	}
 }
+
+// TestErrorsAreForgottenAfterASuccessfulRun covers a job that failed and has
+// since been running cleanly. A scheduled bisync that broke at six and has
+// succeeded every half hour since is not a job with a problem, and keeping the
+// old entry on screen makes it look like one.
+func TestErrorsAreForgottenAfterASuccessfulRun(t *testing.T) {
+	s := newSystemdWith(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("unused")
+	}, []string{"user"})
+
+	failedAt := time.Now().Add(-6 * time.Hour)
+	s.remember("user/jd-bisync.service", []model.LogLine{
+		{At: failedAt, Priority: 3, Message: "Failed with result 'signal'"},
+	})
+
+	u := model.Unit{
+		Name: "jd-bisync.service", Result: "success",
+		ActiveState: "inactive", SubState: "dead",
+		// A run that finished after the failure.
+		InactiveEnter: failedAt.Add(time.Hour),
+		Errors:        []model.LogLine{{At: failedAt, Priority: 3, Message: "Failed with result 'signal'"}},
+	}
+	if got := s.forgetResolved("user", u); got != nil {
+		t.Errorf("a superseded error survived: %+v", got)
+	}
+	if _, ok := s.recent["user/jd-bisync.service"]; ok {
+		t.Error("the retained tail was not cleared")
+	}
+}
+
+func TestErrorsSurviveWhenNothingHasSucceededSince(t *testing.T) {
+	s := newSystemdWith(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("unused")
+	}, []string{"user"})
+	failedAt := time.Now().Add(-time.Hour)
+	errs := []model.LogLine{{At: failedAt, Priority: 3, Message: "boom"}}
+
+	// A long-running service never "succeeds", so its errors must age out
+	// rather than be cleared: InactiveEnter stays zero for as long as it runs.
+	mount := model.Unit{
+		Name: "rclone-mount.service", Result: "success",
+		ActiveState: "active", SubState: "running", Errors: errs,
+	}
+	if got := s.forgetResolved("user", mount); len(got) != 1 {
+		t.Errorf("a running mount lost its errors: %+v", got)
+	}
+
+	// A job whose last run ended before the error is not evidence of anything.
+	stale := model.Unit{
+		Name: "job.service", Result: "success",
+		ActiveState: "inactive", SubState: "dead",
+		InactiveEnter: failedAt.Add(-time.Hour),
+		Errors:        errs,
+	}
+	if got := s.forgetResolved("user", stale); len(got) != 1 {
+		t.Errorf("an error newer than the last run was dropped: %+v", got)
+	}
+
+	// And a unit that is still failing keeps them regardless.
+	failing := model.Unit{
+		Name: "job.service", Result: "exit-code", ActiveState: "failed",
+		InactiveEnter: time.Now(), Errors: errs,
+	}
+	if got := s.forgetResolved("user", failing); len(got) != 1 {
+		t.Errorf("a failing unit lost its errors: %+v", got)
+	}
+}

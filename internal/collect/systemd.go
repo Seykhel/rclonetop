@@ -300,6 +300,7 @@ func (s *Systemd) collectScope(ctx context.Context, scope string) ([]model.Unit,
 		}
 		if !u.IsTimer() {
 			u.Errors = s.journal(ctx, scope, name)
+			u.Errors = s.forgetResolved(scope, u)
 		}
 
 		units = append(units, u)
@@ -589,6 +590,28 @@ func (s *Systemd) journal(ctx context.Context, scope, unit string) []model.LogLi
 		s.cursors[key] = next
 	}
 	return s.rememberLocked(key, lines)
+}
+
+// forgetResolved drops a unit's retained errors once a later run has succeeded.
+//
+// A scheduled job that failed at six and has run cleanly every half hour since
+// is not a job with a problem, and keeping the old entry on screen makes it
+// look like one. This only applies to jobs that finish: a mount never
+// "succeeds", so its errors are left to age out instead.
+func (s *Systemd) forgetResolved(scope string, u model.Unit) []model.LogLine {
+	if u.Failed() || u.InactiveEnter.IsZero() || len(u.Errors) == 0 {
+		return u.Errors
+	}
+	newest := u.Errors[len(u.Errors)-1].At
+	if newest.IsZero() || !u.InactiveEnter.After(newest) {
+		return u.Errors
+	}
+
+	key := scope + "/" + u.Name
+	s.mu.Lock()
+	delete(s.recent, key)
+	s.mu.Unlock()
+	return nil
 }
 
 // remember folds newly read entries into a unit's retained tail. The caller

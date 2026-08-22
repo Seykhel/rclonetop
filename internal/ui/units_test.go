@@ -7,6 +7,7 @@ import (
 
 	"github.com/Seykhel/rclonetop/internal/model"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // plain renders a model's unit section with the styling stripped, so the tests
@@ -324,5 +325,88 @@ func TestTruncateYieldsNothingWithoutRoom(t *testing.T) {
 		if got := Truncate("something", width, false); got != "" {
 			t.Errorf("Truncate(width %d) = %q, want empty", width, got)
 		}
+	}
+}
+
+// TestUnitOfAShownProcessIsNotRepeated covers the redundancy between the two
+// sections. A mount appears as a process line with its throughput, and its
+// systemd unit would describe the same thing again in different words -- "up
+// 14h40m" against "running for 14h40m". The process line wins; what only the
+// unit knows travels with it.
+func TestUnitOfAShownProcessIsNotRepeated(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWith([]model.Unit{
+		{
+			Name: "rclone-mount.service", Scope: "user",
+			ActiveState: "active", SubState: "running", Result: "success",
+			ActiveEnter: now.Add(-14 * time.Hour),
+			Errors: []model.LogLine{{
+				At: now.Add(-time.Minute), Priority: 3, Message: "vfs cache: RootURL not set",
+			}},
+		},
+		{
+			Name: "jd-bisync.service", Scope: "user",
+			ActiveState: "inactive", SubState: "dead", Result: "success",
+			InactiveEnter: now.Add(-2 * time.Minute),
+		},
+	}, now)
+	m.state.Processes = []model.Process{{
+		PID: 2702, Kind: model.KindMount, Unit: "rclone-mount.service",
+		Remotes: []string{"gdrive:"}, Paths: []string{"gdrive:", "/mnt"},
+		StartedAt: now.Add(-14 * time.Hour), IOAvailable: true,
+	}}
+	// Without a collector on record the view reports "collecting…" instead of
+	// what it has, which is the honest thing everywhere but here.
+	m.state.Seen[model.SourceProc] = now
+	m.width = 100
+
+	got := stripANSI(m.renderDense())
+
+	if strings.Contains(got, "UNIT   rclone-mount") {
+		t.Errorf("the mount is described twice:\n%s", got)
+	}
+	// The job with no process of its own keeps its line.
+	if !strings.Contains(got, "jd-bisync") {
+		t.Errorf("a unit with no process lost its line:\n%s", got)
+	}
+	// And the unit's journal error is not lost with the suppressed line.
+	if !strings.Contains(got, "RootURL not set") {
+		t.Errorf("the unit's error was dropped:\n%s", got)
+	}
+	if strings.Count(got, "RootURL not set") != 1 {
+		t.Errorf("the error is shown more than once:\n%s", got)
+	}
+}
+
+// TestErrorColourCoolsWithAge covers the difference between "something is
+// wrong" and "something went wrong hours ago". The age is printed either way,
+// but painting a five-hour-old failure as brightly as a fresh one says
+// something untrue about how urgent it is.
+func TestErrorColourCoolsWithAge(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(0)
+
+	now := time.Unix(1787433722, 0)
+	m := modelWith(nil, now)
+
+	fresh := m.fadedAlarm(now.Add(-time.Minute)).Render("x")
+	old := m.fadedAlarm(now.Add(-5 * time.Hour)).Render("x")
+	ancient := m.fadedAlarm(now.Add(-48 * time.Hour)).Render("x")
+
+	if fresh == old {
+		t.Errorf("a five-hour-old error is painted like a fresh one: %q", fresh)
+	}
+	if old == ancient {
+		t.Errorf("the fade does not continue past five hours: %q vs %q", old, ancient)
+	}
+	// Past the window it settles on the inactive colour rather than drifting on.
+	settled := m.fadedAlarm(now.Add(-100 * time.Hour)).Render("x")
+	if settled != ancient {
+		t.Errorf("the fade did not clamp: %q vs %q", settled, ancient)
+	}
+	// And a fresh one is the alarm colour itself.
+	if want := lipgloss.NewStyle().
+		Foreground(m.opts.Theme.Color("hi_fg").Lipgloss()).Render("x"); fresh != want {
+		t.Errorf("a fresh error is not the alarm colour: %q, want %q", fresh, want)
 	}
 }

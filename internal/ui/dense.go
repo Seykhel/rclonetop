@@ -286,7 +286,11 @@ func (m Model) denseProcess(p model.Process, width int) string {
 		third = "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
 	}
 
-	return head + "\n" + second + "\n" + third + "\n"
+	// Whatever the owning systemd unit logged. Only the unit knows it, and its
+	// own line is suppressed precisely because this process line already says
+	// everything else about the same thing.
+	return head + "\n" + second + "\n" + third + "\n" +
+		m.renderErrors(m.unitErrorsFor(p), width)
 }
 
 // rateCell renders one direction of throughput, coloured by how close it is to
@@ -297,7 +301,8 @@ func (m Model) rateCell(arrow string, bps float64, ramp string) string {
 		scale = minRateScale
 	}
 	st := m.gradientStyle(ramp, bps/scale)
-	return st.Render(arrow+" ") + st.Render(fmt.Sprintf("%-12s", Rate(bps, m.opts.Base10)))
+	return st.Render(arrow+" ") +
+		st.Render(fmt.Sprintf("%-*s", rateFieldWidth, Rate(bps, m.opts.Base10)))
 }
 
 // sparkline draws a process's recent throughput next to its current rate.
