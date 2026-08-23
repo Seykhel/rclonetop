@@ -83,18 +83,32 @@ func run() error {
 
 	host, _ := os.Hostname()
 
+	// Three collectors know something a fourth needs, and none of them can find
+	// it out alone.
+	//
 	// The systemd collector cannot tell which units drive rclone when they run
-	// it from a wrapper script. A live rclone's cgroup names its unit exactly,
-	// so the process collector feeds it that as it goes.
+	// it from a wrapper script; a live rclone's cgroup names its unit exactly.
+	// The log collector has no way to guess which files to follow; a live
+	// rclone's command line names them. And the bisync collector cannot undo
+	// the mangling in its listing filenames; the log writes the paths out in
+	// full. In each case the process collector is already looking at the right
+	// thing at the right moment, so it passes it on.
 	systemd := collect.NewSystemd()
+	bisync := collect.NewBisync()
+	logs := collect.NewLogs()
 	procs := collect.NewProcs()
 	procs.OnProcesses(systemd.NoteProcesses)
+	procs.OnProcesses(logs.NoteProcesses)
+	logs.OnPaths(bisync.NotePaths)
 
+	// The order matters for -d, which runs them in turn: the process collector
+	// has to go first for the log collector to have anything to follow.
 	collectors := []collect.Collector{
 		procs,
-		collect.NewBisync(),
+		bisync,
 		collect.NewLocalFS(),
 		systemd,
+		logs,
 	}
 
 	if flags.debug {

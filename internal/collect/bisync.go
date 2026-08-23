@@ -5,9 +5,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Seykhel/rclonetop/internal/model"
@@ -44,6 +46,15 @@ type Bisync struct {
 	// on modification time. Listings only change when a run completes, so
 	// re-reading them on every tick would be pure waste.
 	cache map[string]cachedListing
+
+	// mu guards paths, which is written from the log collector's goroutine and
+	// read from this one.
+	mu sync.Mutex
+
+	// paths maps a session's stem to the two operands the log spelled out in
+	// full. They are remembered between runs: the listings outlive the process
+	// that wrote them, and so should the knowledge of what they describe.
+	paths map[string][2]string
 }
 
 type cachedListing struct {
@@ -68,7 +79,49 @@ func NewBisync() *Bisync { return NewBisyncAt(DefaultBisyncDir()) }
 
 // NewBisyncAt returns a collector reading listings from dir.
 func NewBisyncAt(dir string) *Bisync {
-	return &Bisync{dir: dir, cache: make(map[string]cachedListing)}
+	return &Bisync{
+		dir:   dir,
+		cache: make(map[string]cachedListing),
+		paths: make(map[string][2]string),
+	}
+}
+
+// nonCanonical are the characters rclone replaces when it builds a session name
+// out of two paths, mirroring bisync's own bilib.CanonicalPath.
+//
+// Establishing this by experiment rather than by reading it off: a real run on
+// "/tmp/x/My Docs" produced "tmp_x_My_Docs", so a space is mangled exactly like
+// a separator.
+var nonCanonical = regexp.MustCompile(`[\s\\/:?*]`)
+
+// canonicalPath turns one operand into the form bisync uses in its filenames.
+func canonicalPath(path string) string {
+	return nonCanonical.ReplaceAllString(strings.Trim(path, "/"), "_")
+}
+
+// NotePaths records what a session's two ends really are.
+//
+// The mangling above is not reversible -- "gdrive_Documents" could have been
+// "gdrive:Documents" or "gdrive/Documents" -- so the paths are not guessed at
+// from the filename. They are matched to it in the one direction that is
+// reliable: canonicalising what the log said and seeing which session it names.
+func (b *Bisync) NotePaths(path1, path2 string) {
+	if path1 == "" || path2 == "" {
+		return
+	}
+	stem := canonicalPath(path1) + ".." + canonicalPath(path2)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.paths[stem] = [2]string{path1, path2}
+}
+
+// notedPaths returns the operands recorded for a session, if any.
+func (b *Bisync) notedPaths(stem string) ([2]string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	paths, ok := b.paths[stem]
+	return paths, ok
 }
 
 func (b *Bisync) Name() string         { return "bisync" }
@@ -165,10 +218,14 @@ func (b *Bisync) session(stem string, live map[string]bool) (model.SyncPair, boo
 	}
 
 	leftLabel, rightLabel := splitStem(stem)
+	var leftPath, rightPath string
+	if paths, ok := b.notedPaths(stem); ok {
+		leftPath, rightPath = paths[0], paths[1]
+	}
 	pair := model.SyncPair{
 		Name:     stem,
-		Left:     model.SyncSide{Label: leftLabel, Files: left.files, Bytes: left.bytes},
-		Right:    model.SyncSide{Label: rightLabel, Files: right.files, Bytes: right.bytes},
+		Left:     model.SyncSide{Label: leftLabel, Path: leftPath, Files: left.files, Bytes: left.bytes},
+		Right:    model.SyncSide{Label: rightLabel, Path: rightPath, Files: right.files, Bytes: right.bytes},
 		Drift:    drift(left, right),
 		ListedAt: left.at,
 		Source:   model.SourceBisync,

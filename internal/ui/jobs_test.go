@@ -1,0 +1,228 @@
+package ui
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// plainProcess renders one process block with the styling stripped.
+func plainProcess(m Model, p model.Process, width int) string {
+	var b strings.Builder
+	for _, line := range strings.Split(m.denseProcess(p, width), "\n") {
+		b.WriteString(stripANSI(line))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func modelWithJobs(procs []model.Process, jobs []model.Job, now time.Time) Model {
+	lipgloss.SetColorProfile(0) // Ascii: no escape sequences at all
+	m := New(nil, Options{}, nil)
+	m.now = now
+	m.state.Processes = procs
+	m.state.Jobs = jobs
+	return m
+}
+
+// A running bisync out of the fixtures: 2.87 GiB of 4.93 GiB moved, 1158 files
+// of 4667 done. None of that is knowable from /proc, which can only say how
+// many bytes went past.
+func TestProgressLineShowsHowFarAlongTheRunIs(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile:   "/var/log/rclone.log",
+		PID:       193345,
+		HaveStats: true,
+		Stats: model.JobStats{
+			Bytes: 3080000000, TotalBytes: 5295694675,
+			Transfers: 1158, TotalTransfers: 4667,
+			ETA: 2*time.Minute + 51*time.Second, ETAKnown: true,
+		},
+	}}, now)
+
+	got := plainProcess(m, proc, 80)
+
+	for _, want := range []string{"58%", "2.9 GiB / 4.9 GiB", "1158/4667 files", "ETA 2m51s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// Until the first statistics block lands there is nothing to say, and a bar at
+// nought per cent would be a claim about progress rather than a report of it.
+func TestProgressLineIsSuppressedWithoutStatistics(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345,
+	}}, now)
+
+	if got := plainProcess(m, proc, 80); strings.Contains(got, "%") {
+		t.Errorf("a progress line appeared with no statistics behind it:\n%s", got)
+	}
+}
+
+// Two rclone processes on one host each have their own log. Showing one's
+// progress against the other's identity would be worse than showing none.
+func TestProgressLineBelongsToItsOwnProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/other.log", PID: 999, HaveStats: true,
+		Stats: model.JobStats{Bytes: 3080000000, TotalBytes: 5295694675},
+	}}, now)
+
+	if got := plainProcess(m, proc, 80); strings.Contains(got, "58%") {
+		t.Errorf("another process's progress was drawn here:\n%s", got)
+	}
+}
+
+func TestUnknownETAIsNotShownAsZero(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Stats: model.JobStats{Bytes: 100, TotalBytes: 200},
+	}}, now)
+
+	if got := plainProcess(m, proc, 80); strings.Contains(got, "ETA") {
+		t.Errorf("an unknown ETA was rendered anyway:\n%s", got)
+	}
+}
+
+// The common case for a healthy bisync: nothing to move, thousands of files
+// checked. With only the transfer counters on the line it would look idle.
+func TestARunWithNothingToTransferStillReportsItsChecks(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Stats: model.JobStats{Checks: 9418, TotalChecks: 9418, Elapsed: 47600 * time.Millisecond},
+	}}, now)
+
+	got := plainProcess(m, proc, 80)
+	if !strings.Contains(got, "9418 checked") {
+		t.Errorf("the checks are missing from:\n%s", got)
+	}
+	if strings.Contains(got, "%") {
+		t.Errorf("a percentage of nothing is not a measurement:\n%s", got)
+	}
+}
+
+func TestErrorCountIsShown(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Stats: model.JobStats{Checks: 9354, TotalChecks: 9354, Errors: 8, FatalError: true},
+	}}, now)
+
+	if got := plainProcess(m, proc, 80); !strings.Contains(got, "8 errors") {
+		t.Errorf("the error count is missing from:\n%s", got)
+	}
+}
+
+// The log is the only place a job's own errors appear when it writes to a file
+// rather than to the journal.
+func TestLogErrorsAppearUnderTheProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345,
+		Errors: []model.LogLine{{
+			At:       now.Add(-90 * time.Second),
+			Priority: 3,
+			Message:  "notes/todo.md: Failed to copy: failed to open source object: RootURL not set",
+		}},
+	}}, now)
+
+	// Truncated to the width, like every other error line: the point is that
+	// something failed and roughly when, not to be a log viewer.
+	got := plainProcess(m, proc, 80)
+	if !strings.Contains(got, "notes/todo.md: Failed to copy") {
+		t.Errorf("the log error is missing from:\n%s", got)
+	}
+	if !strings.Contains(got, "1m30s ago") {
+		t.Errorf("the error's age is missing from:\n%s", got)
+	}
+}
+
+// The whole point of recovering the paths: "home_user_Documents" is what is on
+// disk, but it is not what anyone typed.
+func TestSyncPairPrefersTheRealPaths(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWithJobs(nil, nil, now)
+	m.state.SyncPairs = []model.SyncPair{{
+		Name:  "home_user_Documents..gdrive_Documents",
+		Left:  model.SyncSide{Label: "home_user_Documents", Path: "/home/user/Documents/", Files: 10},
+		Right: model.SyncSide{Label: "gdrive_Documents", Path: "gdrive:Documents/", Files: 10},
+	}}
+
+	got := stripANSI(m.denseSyncPair(m.state.SyncPairs[0], 80))
+	if !strings.Contains(got, "gdrive:Documents") {
+		t.Errorf("the real path is missing from:\n%s", got)
+	}
+	if strings.Contains(got, "gdrive_Documents") {
+		t.Errorf("the mangled label is still being shown:\n%s", got)
+	}
+}
+
+// The same guarantee the unit section already carries, extended to the two
+// things the log collector adds: a progress line and a pair of real paths,
+// either of which can be longer than the terminal.
+func TestJobContentDoesNotOverflow(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{
+		PID: 193345, Kind: model.KindBisync, IOAvailable: true,
+		Paths: []string{"/home/user/a/very/long/local/path/that/keeps/going", "gdrive:and/a/remote/one/just/as/long"},
+	}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Stats: model.JobStats{
+			Bytes: 3080000000, TotalBytes: 5295694675,
+			Transfers: 1158, TotalTransfers: 4667,
+			Checks: 9354, TotalChecks: 9354, Errors: 8, FatalError: true,
+			ETA: 2*time.Minute + 51*time.Second, ETAKnown: true,
+		},
+		Errors: []model.LogLine{{
+			At: now.Add(-time.Minute), Priority: 3,
+			Message: strings.Repeat("a long log message that keeps going ", 10),
+		}},
+	}}, now)
+	m.state.SyncPairs = []model.SyncPair{{
+		Name:  "home_user_Documents..gdrive_Documents",
+		Left:  model.SyncSide{Label: "home_user_Documents", Path: "/home/user/a/very/long/local/path/that/keeps/going", Files: 10},
+		Right: model.SyncSide{Label: "gdrive_Documents", Path: "gdrive:and/a/remote/one/just/as/long", Files: 10},
+	}}
+
+	for _, width := range []int{10, 15, 24, 27, 40, 60, 80, 120} {
+		m.width = width
+		for _, line := range strings.Split(stripANSI(m.renderDense()), "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Errorf("at width %d a line came out %d wide: %q", width, got, line)
+			}
+		}
+	}
+}
+
+// A session no log has described still has to be shown, under the only name
+// there is for it.
+func TestSyncPairFallsBackToTheMangledLabel(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWithJobs(nil, nil, now)
+	pair := model.SyncPair{
+		Name:  "home_user_Documents..gdrive_Documents",
+		Left:  model.SyncSide{Label: "home_user_Documents", Files: 10},
+		Right: model.SyncSide{Label: "gdrive_Documents", Files: 10},
+	}
+
+	if got := stripANSI(m.denseSyncPair(pair, 80)); !strings.Contains(got, "gdrive_Documents") {
+		t.Errorf("nothing identifies the session in:\n%s", got)
+	}
+}
