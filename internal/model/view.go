@@ -37,9 +37,17 @@ type View struct {
 type ProcRow struct {
 	Process Process
 
-	// Job is what the log this process writes has to say about the run. It is
-	// the zero value when no log was found for it, which reads the same way
-	// everywhere it is used: no statistics, no outcome, no read error.
+	// Job is what the log this process writes has to say about the run, and the
+	// zero value when no log was found for it.
+	//
+	// The zero stands in for a (Job, bool) pair, and that only works because
+	// every field a renderer reads gates on something first: ReadError on being
+	// non-empty, the statistics on HaveStats, the outcome on Outcome. It is
+	// load-bearing rather than incidental. A field added to Job that a renderer
+	// would draw unconditionally has to arrive with its own "is this known"
+	// companion, or a process with no log behind it renders a zero -- and a
+	// zero and a missing measurement mean opposite things to someone checking
+	// whether their backup ran.
 	Job Job
 
 	// Errors are the unit's journal entries followed by the job's own log
@@ -60,6 +68,9 @@ type UnitRow struct {
 	// stay tellable apart.
 	Timer Unit
 
+	// Job is what the file this unit names was read to contain, and the zero
+	// value when it names none or none has been read. It carries the same
+	// obligation as a ProcRow's.
 	Job Job
 
 	// LastRun is when the most recent run began or ended, resolved against the
