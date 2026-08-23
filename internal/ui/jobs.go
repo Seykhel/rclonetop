@@ -7,22 +7,6 @@ import (
 	"github.com/Seykhel/rclonetop/internal/model"
 )
 
-// jobFor returns the job a process is writing about itself, if the log
-// collector found its log file.
-//
-// The match is on the PID, which is exact: the log file was discovered from
-// that process's own command line. A job whose process has exited keeps its
-// last statistics but no longer matches anything, and so quietly stops being
-// drawn.
-func (m Model) jobFor(p model.Process) (model.Job, bool) {
-	for _, j := range m.state.Jobs {
-		if j.PID != 0 && j.PID == p.PID {
-			return j, true
-		}
-	}
-	return model.Job{}, false
-}
-
 // jobProgress renders what rclone says about its own run: how much of the work
 // it set itself is done.
 //
@@ -30,11 +14,11 @@ func (m Model) jobFor(p model.Process) (model.Job, bool) {
 // byte counters say what has gone past; only rclone knows how much there was to
 // begin with, and therefore whether a transfer is nearly finished or has barely
 // started.
-func (m Model) jobProgress(p model.Process) string {
-	job, ok := m.jobFor(p)
-	if !ok {
-		return ""
-	}
+//
+// A row with no log behind it carries the zero Job, which falls through every
+// branch below and renders nothing -- the same answer as before, without a
+// second way of spelling "there is nothing to say".
+func (m Model) jobProgress(job model.Job) string {
 	if job.ReadError != "" {
 		// The same distinction the throughput line makes for an unreadable
 		// /proc/<pid>/io: a job that stands still because nobody can read its
@@ -91,19 +75,6 @@ func (m Model) jobProgress(p model.Process) string {
 		return ""
 	}
 	return "  " + strings.Join(parts, m.style("div_line").Render(" · ")) + "\n"
-}
-
-// jobErrorsFor returns what the process's own log recorded.
-//
-// A job started with --log-file writes nothing to the journal, so these are
-// invisible to the systemd collector: for that arrangement, which is the
-// commonest one, this is the only place its errors appear at all.
-func (m Model) jobErrorsFor(p model.Process) []model.LogLine {
-	job, ok := m.jobFor(p)
-	if !ok {
-		return nil
-	}
-	return job.Errors
 }
 
 // sideName is how one end of a bisync pair is identified on screen: the path

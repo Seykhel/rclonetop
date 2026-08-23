@@ -40,8 +40,8 @@ reports.
 Three layers, one direction of flow:
 
 ```
-internal/collect/*  →  model.Snapshot  →  model.State  →  internal/ui  →  terminal
-   (goroutines)         (per source)       (merged)        (Bubble Tea)
+internal/collect/*  →  model.Snapshot  →  model.State  →  model.View  →  internal/ui  →  terminal
+   (goroutines)         (per source)       (per source)    (joined)      (Bubble Tea)
 ```
 
 **Collectors** (`internal/collect`) each implement `Collector`: `Name`, `Source`, `Interval`,
@@ -69,18 +69,29 @@ been seen, so answering "nothing to do yet" there switches it off for the whole 
   collector that finds nothing must return an empty slice, not nil (`TestNoProcessesReportsEmptyNotNil`).
   `State.Fail` records an error without discarding earlier data.
 
-Merging is per-source: each collector owns the slices it fills. Cross-source merging on natural keys
-(PID, unit name, the `(srcFs,dstFs)` pair) is deliberately not implemented yet. Where one collector
-holds a fact another needs, it is handed over at collection time rather than merged afterwards —
-see the seams above. The bisync one is exact rather than a guess: `canonicalPath` mangles what the
-log said the way rclone does and matches the result against the listing filename, because the
-mangling cannot be run backwards.
+`State.Apply` merges per-source: each collector owns the slices it fills, and one collector's
+snapshot never overwrites another's. Where one collector holds a fact another *needs in order to
+collect at all*, it is handed over at collection time rather than merged afterwards — see the seams
+above. The bisync one is exact rather than a guess: `canonicalPath` mangles what the log said the way
+rclone does and matches the result against the listing filename, because the mangling cannot be run
+backwards.
+
+**The joins** live in `State.Resolve` (`model/view.go`), which turns the per-source state into the
+`View` a renderer draws: `ProcRow` and `UnitRow` carry the job, the timer and the errors that belong
+to them, already matched on PID, unit name, log file and mountpoint. Rules that live here and
+nowhere else: a unit whose process is on screen gets no line of its own but its journal errors move
+to that process; two timers starting one service collapse to the one due first; a mount no process
+serves is an orphan. `Resolve` takes no clock and returns plain data — ageing a timestamp for
+display is the renderer's business — which is what makes these rules testable without rendering
+anything (`model/view_test.go`).
 
 **The UI** (`internal/ui`) is one Bubble Tea `Model`. `Update` handles four messages: window size,
 keys, a clock `tick` (so uptimes advance with no new data), and `resultMsg` from the collector
 channel — `waitFor` re-arms itself after each one. There is a single view, `renderDense` in
 `dense.go`, plus `units.go`, `graphs.go`, `format.go` (`Bytes`/`Rate`/`Duration`/`Ago`/`Truncate`).
-Colour is applied only here, via `Model.style(key)` and `Model.gradientStyle(ramp, frac)`.
+It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
+something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here, via
+`Model.style(key)` and `Model.gradientStyle(ramp, frac)`.
 
 **Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
 data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),
