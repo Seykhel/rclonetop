@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Seykhel/rclonetop/internal/execstart"
 	"github.com/Seykhel/rclonetop/internal/model"
 )
 
@@ -134,7 +135,7 @@ func (l *Logs) NoteProcesses(procs []model.Process) {
 // readable for another user's process, so a job configured that way is not
 // followed either.
 func logFileFor(p model.Process) string {
-	path := logFileFromArgs(p.Args)
+	path := execstart.LogFileFromArgs(p.Args)
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
@@ -142,20 +143,6 @@ func logFileFor(p model.Process) string {
 		return ""
 	}
 	return filepath.Join(p.Cwd, path)
-}
-
-// logFileFromArgs finds the log file in a command line, in either of the two
-// spellings Go's flag package and rclone's both accept.
-func logFileFromArgs(args []string) string {
-	for i, a := range args {
-		switch {
-		case a == "--log-file" && i+1 < len(args):
-			return args[i+1]
-		case strings.HasPrefix(a, "--log-file="):
-			return strings.TrimPrefix(a, "--log-file=")
-		}
-	}
-	return ""
 }
 
 // NoteUnitLogs learns the log files the units drive rclone to write.

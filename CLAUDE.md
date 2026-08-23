@@ -88,6 +88,14 @@ data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare
 `internal/theme` (btop `.theme` parsing, 101-step gradients matching btop's banding, plus the
 `default` and `tty` built-ins in `builtin.go`).
 
+`internal/execstart` is the other one: everything involved in reading what a unit actually runs,
+behind two functions plus a helper — `DrivesRclone(execStart)`, `LogFile(execStart, home)` and
+`LogFileFromArgs(args)`. Behind them sit systemd's `path=`/`argv[]=` spelling, the bounded wrapper
+script read, and the shell reading that resolves `--log-file "$LOG_DIR/x.log"` without running
+anything. The systemd collector keeps only the cache of the answers, and `Logs` uses
+`LogFileFromArgs` on the vector it takes from `/proc`. `home` is what `$HOME` stands for and must be
+empty when there is no honest answer — a system unit's home is root's, or whatever `User=` says.
+
 ### Things that will bite
 
 - **Rates need two samples.** `/proc/<pid>/io` counters are cumulative and must never be rendered as
@@ -120,6 +128,9 @@ constants, so the suite never depends on what is running on the host.
 - `Logs` needs no seam of its own: it is told what to read by `NoteProcesses`, so a test points it
   at a file in `t.TempDir()` through a fabricated command line. `feed(lines...)` drives the parser
   alone.
+- `internal/execstart` needs none either: its input is a string, and its one side effect is reading
+  a path that string names, so `writeScript` puts a wrapper in `t.TempDir()` and hands back the
+  `ExecStart` systemd would have recorded for it.
 
 The log fixtures are transcribed from real rclone output, paths neutralised and nothing else
 tidied — the tab inside `Transferred:`, the alignment padding, the trailing `Listed` count. Two of
@@ -133,8 +144,11 @@ Any new collector should follow the same shape: a real constructor plus an `...A
 
 - **Read-only, always.** No writes, no config changes, no starting or stopping transfers or units,
   no network scanning. `systemctl`/`journalctl` are invoked directly (no shell, no D-Bus library)
-  with read-only subcommands and `LC_ALL=C`; wrapper-script reads are bounded to regular files under
-  256 KiB that start with a shebang, and only for units systemd already lists.
+  with read-only subcommands and `LC_ALL=C`; wrapper-script reads (`internal/execstart`) are bounded
+  to regular files under 256 KiB that start with a shebang, opened `O_NONBLOCK` and inspected through
+  the descriptor, and only for units systemd already lists. A script is read, never run: command
+  substitution, `${VAR:-default}` and an unassigned variable all mean "no answer", because working
+  out what those produce means executing it.
 - **No flag that does nothing.** btop's `-c`, `-p` and `--vim-keys` are intentionally unregistered
   until the config file and box presets exist; accepting and ignoring a flag is worse than rejecting
   it. Short flags mirror btop's meaning where it applies.
