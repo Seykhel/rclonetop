@@ -142,3 +142,17 @@ Any new collector should follow the same shape: a real constructor plus an `...A
   precisely because the requirement is narrower than any library's.
 - Comments in this codebase explain *why*, at length, especially where the obvious implementation is
   wrong. Match that register when editing; do not strip the rationale.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `Seykhel/rclonetop`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles are used as-is: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
