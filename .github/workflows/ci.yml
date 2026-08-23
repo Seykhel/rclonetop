@@ -1,0 +1,69 @@
+# The four checks a change has to pass before it is worth reading.
+#
+# There is deliberately one job rather than four: the whole suite runs in a few
+# seconds, and splitting it would trade that for four checkouts, four toolchain
+# downloads and a status list nobody reads to the end. Any of the steps failing
+# fails the job, and the step name says which.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseding a run only makes sense while a branch is still being pushed to.
+  # On main every commit is one someone may later bisect, so those runs are left
+  # to finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    # Linux only, because the program is: throughput comes from /proc/<pid>/io
+    # and there is nothing to build for a platform that has no procfs.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Taken from go.mod rather than pinned here, so the two cannot drift
+          # apart and quietly test something other than what the module claims
+          # to require.
+          go-version-file: go.mod
+          check-latest: true
+
+      # Reported as a diff rather than a list of names: "internal/ui/dense.go is
+      # not formatted" leaves the reader to reproduce it locally, and the answer
+      # is usually one line of whitespace.
+      - name: gofmt
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "These files are not gofmt'd:"
+            gofmt -l .
+            echo
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race is not optional here. Facts are handed between collectors across
+      # goroutine boundaries -- Procs.OnProcesses to Systemd.NoteProcesses and
+      # Logs.NoteProcesses, Systemd.OnLogFiles to Logs.NoteUnitLogs, Logs.OnPaths
+      # to Bisync.NotePaths -- and the tests that cover those seams only fail
+      # under the detector.
+      #
+      # -count=1 because a cached PASS is not a result: the point of this job is
+      # to have run the tests on this commit.
+      - name: go test
+        run: go test -race -count=1 ./...
