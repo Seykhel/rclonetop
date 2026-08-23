@@ -63,6 +63,13 @@ type Logs struct {
 	mu    sync.Mutex
 	known map[string]logSource
 
+	// unitLogs are the files the systemd collector found named in a unit or in
+	// the wrapper script it runs. They are kept apart from the map above
+	// because each of the two collectors replaces its own set wholesale, and
+	// because a log named by a unit is claimed even with nothing running: that
+	// is the point of it.
+	unitLogs map[string]bool
+
 	tails     map[string]*logTail
 	observers []func(path1, path2 string)
 }
@@ -71,8 +78,9 @@ type Logs struct {
 // read from NoteProcesses.
 func NewLogs() *Logs {
 	return &Logs{
-		known: make(map[string]logSource),
-		tails: make(map[string]*logTail),
+		known:    make(map[string]logSource),
+		unitLogs: make(map[string]bool),
+		tails:    make(map[string]*logTail),
 	}
 }
 
@@ -150,6 +158,25 @@ func logFileFromArgs(args []string) string {
 	return ""
 }
 
+// NoteUnitLogs learns the log files the units drive rclone to write.
+//
+// This is what makes a scheduled job followable between its runs: a timer that
+// fires for a minute every half hour leaves nothing in the process table the
+// rest of the time, and the file it wrote is where its outcome, its errors and
+// -- for bisync -- the real paths of the pair still are.
+func (l *Logs) NoteUnitLogs(paths []string) {
+	unitLogs := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		if p != "" {
+			unitLogs[p] = true
+		}
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.unitLogs = unitLogs
+}
+
 func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 	now := time.Now()
 
@@ -158,8 +185,20 @@ func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 	for path, src := range l.known {
 		known[path] = src
 	}
+	unitLogs := make(map[string]bool, len(l.unitLogs))
+	for path := range l.unitLogs {
+		unitLogs[path] = true
+	}
 	l.mu.Unlock()
 
+	for path := range unitLogs {
+		if _, ok := l.tails[path]; !ok {
+			l.tails[path] = &logTail{
+				path: path,
+				job:  model.Job{LogFile: path, Source: model.SourceLog},
+			}
+		}
+	}
 	for path := range known {
 		if _, ok := l.tails[path]; !ok {
 			l.tails[path] = &logTail{
@@ -179,7 +218,11 @@ func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 		}
 
 		src, live := known[path]
-		if !live && tail.job.At.Before(now.Add(-logRetention)) {
+		// A log a unit named is claimed whether or not anything is running:
+		// having no process is its normal state, not a sign it is finished
+		// with. Only a job discovered from a process that has since gone ages
+		// out.
+		if !live && !unitLogs[path] && tail.job.At.Before(now.Add(-logRetention)) {
 			delete(l.tails, path)
 			continue
 		}

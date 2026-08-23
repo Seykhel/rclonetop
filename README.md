@@ -96,17 +96,23 @@ the whole of it:
   with read-only subcommands, to learn unit state and recent errors. No D-Bus
   library, no shell: arguments are passed directly.
 - **Log files.** The file named by a running rclone's own `--log-file` argument
-  is tailed, incrementally and from near its end: no file is opened that rclone
-  was not already told to write, and nothing is ever written back to it. When
-  that argument is a relative path it is resolved against the process's own
-  working directory, read from `/proc/<pid>/cwd` — and when that cannot be read,
+  — or by the unit that runs it, which is how a job on a timer is followed
+  between its runs — is tailed, incrementally and from near its end: no file is
+  opened that rclone was not already told to write, and nothing is ever written
+  back to it. When that argument is a relative path it is resolved against the
+  process's own working directory, read from `/proc/<pid>/cwd` — and when that
+  cannot be read,
   which is the case for another user's process, the log is left alone rather
   than resolved against rclonetop's directory, where the same name would name a
   different file.
 - **Wrapper scripts.** A unit that runs rclone from a shell script never names
-  it, so the script itself is read to decide whether the unit is relevant. This
-  is bounded to regular files under 256 KiB that begin with a shebang, and only
-  for units systemd already lists.
+  it, so the script itself is read to decide whether the unit is relevant, and
+  to find the `--log-file` it passes. This is bounded to regular files under
+  256 KiB that begin with a shebang, and only for units systemd already lists.
+  A path built from a variable is followed only as far as a plain assignment
+  and `$HOME` will take it, which is reading two lines rather than running
+  them; command substitution, a default-value expansion or a variable that is
+  never assigned all mean the log is left undiscovered.
 - **rc endpoints.** Discovery reads command lines that are already on the host
   and never scans the network. rclone's own documentation notes that *access to
   the rc API is equivalent to shell access as the rclone user*.

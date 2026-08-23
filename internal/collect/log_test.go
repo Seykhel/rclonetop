@@ -849,3 +849,76 @@ func TestIncompleteStatsBlockIsNotCommitted(t *testing.T) {
 		t.Errorf("bytes = %d, want the last complete block's 766703042", got)
 	}
 }
+
+// A job on a half-hourly timer runs for about a minute in thirty. For the other
+// twenty-nine there is no process to ask, and the file is sitting there with
+// the last run's outcome in it.
+func TestALogNotedByAUnitIsFollowedWithNoProcess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bisync.log")
+	writeLog(t, path,
+		`2026/08/22 18:40:00 INFO  : Synching Path1 "/home/user/Documents/" with Path2 "gdrive:Documents/"`,
+		"2026/08/22 18:40:47 INFO  : Bisync successful",
+	)
+
+	l := NewLogs()
+	l.NoteUnitLogs([]string{path})
+
+	snap, err := l.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	job := jobFor(t, snap, path)
+	if job.PID != 0 {
+		t.Errorf("pid = %d, want zero: nothing is running", job.PID)
+	}
+	if !job.Finished || job.Outcome != "successful" {
+		t.Errorf("outcome = %q (finished %v), want the last run's", job.Outcome, job.Finished)
+	}
+	// The point of the whole exercise: the paths reach the bisync collector
+	// without waiting for the next run.
+	if job.Path1 != "/home/user/Documents/" {
+		t.Errorf("path1 = %q", job.Path1)
+	}
+}
+
+// The retention that drops a job an hour after its process exited must not
+// apply to one that never had a process. Otherwise the unit's log is adopted
+// and dropped on alternate ticks for ever.
+func TestAUnitLogIsNotAgedOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bisync.log")
+	// Two days old, which is well past the hour a processless job survives.
+	writeLog(t, path, "2026/08/20 18:40:47 INFO  : Bisync successful")
+
+	l := NewLogs()
+	l.NoteUnitLogs([]string{path})
+	l.Collect(context.Background())
+
+	snap, _ := l.Collect(context.Background())
+	if len(snap.Jobs) != 1 {
+		t.Fatalf("got %d jobs, want the unit's kept: %+v", len(snap.Jobs), snap.Jobs)
+	}
+}
+
+// A unit and a live process naming the same file are one job, not two.
+func TestAUnitAndItsProcessDoNotDouble(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bisync.log")
+	writeLog(t, path, "2026/08/22 18:40:47 INFO  : Building Path1 and Path2 listings")
+
+	l := NewLogs()
+	l.NoteUnitLogs([]string{path})
+	l.NoteProcesses([]model.Process{{PID: 42, Kind: model.KindBisync,
+		Args: []string{"rclone", "bisync", "a", "b", "--log-file", path}}})
+
+	snap, _ := l.Collect(context.Background())
+	if len(snap.Jobs) != 1 {
+		t.Fatalf("got %d jobs, want 1: %+v", len(snap.Jobs), snap.Jobs)
+	}
+	// While it is running the process is the better authority, and its pid is
+	// what ties the progress line to what is on screen.
+	if got := snap.Jobs[0].PID; got != 42 {
+		t.Errorf("pid = %d, want 42", got)
+	}
+}

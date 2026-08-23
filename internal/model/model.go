@@ -302,6 +302,11 @@ type Unit struct {
 	LastTrigger time.Time
 	NextElapse  time.Time
 
+	// LogFile is where this unit tells rclone to write, taken from its command
+	// line or from the wrapper script it runs. It is what makes a scheduled job
+	// followable between its runs, when no process exists to ask.
+	LogFile string
+
 	// Errors are the recent journal entries at warning severity or worse.
 	Errors []LogLine
 

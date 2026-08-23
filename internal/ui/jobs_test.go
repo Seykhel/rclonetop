@@ -244,3 +244,53 @@ func TestSyncPairFallsBackToTheMangledLabel(t *testing.T) {
 		t.Errorf("nothing identifies the session in:\n%s", got)
 	}
 }
+
+// modelWithUnitLog builds a unit whose log the systemd collector found, and the
+// job the log collector then read from it.
+func modelWithUnitLog(outcome string, errs []model.LogLine, now time.Time) Model {
+	lipgloss.SetColorProfile(0)
+	m := New(nil, Options{}, nil)
+	m.now = now
+	m.state.Units = []model.Unit{{
+		Name: "jd-bisync.service", Scope: "user",
+		ActiveState: "inactive", SubState: "dead", Result: "success",
+		InactiveEnter: now.Add(-2 * time.Minute),
+		LogFile:       "/home/user/.local/state/jd-backup/bisync.log",
+	}}
+	m.state.Jobs = []model.Job{{
+		LogFile:  "/home/user/.local/state/jd-backup/bisync.log",
+		Outcome:  outcome,
+		Finished: outcome != "",
+		Errors:   errs,
+	}}
+	return m
+}
+
+// A job started with --log-file writes nothing to the journal, so between runs
+// the unit line has systemd's verdict and nothing else. The log has the words.
+func TestTheUnitLineShowsWhatItsLogSaid(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWithUnitLog("aborted", []model.LogLine{{
+		At:       now.Add(-3 * time.Minute),
+		Priority: 3,
+		Message:  "Bisync critical error: failed to set directory modtime",
+	}}, now)
+
+	got := plain(m, 100)
+	if !strings.Contains(got, "aborted") {
+		t.Errorf("the outcome the log recorded is missing from:\n%s", got)
+	}
+	if !strings.Contains(got, "Bisync critical error") {
+		t.Errorf("the log's own error is missing from:\n%s", got)
+	}
+}
+
+// A unit whose log said nothing in particular is left exactly as it was.
+func TestAUnitWithoutALogIsUnchanged(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWithUnitLog("", nil, now)
+
+	if got := plain(m, 100); strings.Contains(got, "!") {
+		t.Errorf("something was invented for a log with nothing to say:\n%s", got)
+	}
+}
