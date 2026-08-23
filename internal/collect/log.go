@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -103,7 +104,7 @@ func (l *Logs) OnPaths(fn func(path1, path2 string)) {
 func (l *Logs) NoteProcesses(procs []model.Process) {
 	known := make(map[string]logSource, len(procs))
 	for _, p := range procs {
-		if path := logFileFromArgs(p.Args); path != "" {
+		if path := logFileFor(p); path != "" {
 			known[path] = logSource{pid: p.PID, kind: p.Kind}
 		}
 	}
@@ -113,12 +114,30 @@ func (l *Logs) NoteProcesses(procs []model.Process) {
 	l.known = known
 }
 
+// logFileFor finds the log file a process is writing, resolved to an absolute
+// path.
+//
+// A relative argument is relative to rclone's working directory, not to
+// rclonetop's. Resolving it here would open whatever file of that name happens
+// to sit beside rclonetop -- the wrong file, and silently -- so without the
+// process's own directory the job is simply not followed.
+//
+// RCLONE_LOG_FILE would name a log too, but a process's environment is not
+// readable for another user's process, so a job configured that way is not
+// followed either.
+func logFileFor(p model.Process) string {
+	path := logFileFromArgs(p.Args)
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if p.Cwd == "" {
+		return ""
+	}
+	return filepath.Join(p.Cwd, path)
+}
+
 // logFileFromArgs finds the log file in a command line, in either of the two
 // spellings Go's flag package and rclone's both accept.
-//
-// RCLONE_LOG_FILE would do the same job, but a process's environment is not
-// readable for another user's process and is not worth the special case: a job
-// configured that way simply is not followed.
 func logFileFromArgs(args []string) string {
 	for i, a := range args {
 		switch {
@@ -153,7 +172,6 @@ func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 	// Non-nil even when empty: a nil slice means "nothing to say", which would
 	// leave the last job on screen after it finished.
 	jobs := make([]model.Job, 0, len(l.tails))
-	var firstErr error
 
 	for path, tail := range l.tails {
 		if err := ctx.Err(); err != nil {
@@ -166,6 +184,14 @@ func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 			continue
 		}
 
+		// A file that cannot be read is this job's problem, not the collector's.
+		//
+		// Returning it as the collection's error would be worse than useless:
+		// both consumers drop the snapshot when an error comes back with it, so
+		// one root-owned log under /var/log -- discovered from a world-readable
+		// command line, then refused on open, on every tick for ever -- would
+		// take every other job off the screen with it.
+		tail.job.ReadError = ""
 		if err := tail.read(); err != nil {
 			if os.IsNotExist(err) {
 				// The file was removed. There is nothing left to follow and
@@ -173,9 +199,7 @@ func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 				delete(l.tails, path)
 				continue
 			}
-			if firstErr == nil {
-				firstErr = err
-			}
+			tail.job.ReadError = err.Error()
 		}
 
 		// The command line is the better authority on what a job is: the log
@@ -207,7 +231,7 @@ func (l *Logs) Collect(ctx context.Context) (model.Snapshot, error) {
 		}
 	}
 
-	return model.Snapshot{At: now, Source: model.SourceLog, Jobs: jobs}, firstErr
+	return model.Snapshot{At: now, Source: model.SourceLog, Jobs: jobs}, nil
 }
 
 // read consumes whatever has been appended since the last call.
@@ -251,7 +275,11 @@ func (t *logTail) read() error {
 		// Written faster than this collector reads. Skipping to the newest
 		// window loses the middle, which is the right thing to lose: what is
 		// on screen should be what is happening now.
-		t.offset, t.skipPartial = info.Size()-logTailWindow, true
+		//
+		// The half-read block goes with it, for the same reason it does on a
+		// rotation: what closes a block after the jump belongs to a different
+		// one, and the two would commit together as a single mixed sample.
+		t.offset, t.skipPartial, t.pending = info.Size()-logTailWindow, true, nil
 	}
 	t.info = info
 
@@ -683,7 +711,7 @@ func (t *logTail) statsLine(msg string) {
 		if t.pending == nil {
 			return
 		}
-		if d, err := time.ParseDuration(rest); err == nil {
+		if d, ok := parseLogDuration(rest); ok {
 			t.pending.Elapsed = d
 		}
 		// The block is complete, so it becomes the sample.
@@ -734,13 +762,72 @@ func parseSpeedAndETA(rest string) (speed float64, eta time.Duration, known bool
 		case strings.HasPrefix(part, "ETA "):
 			// rclone writes "-" whenever it cannot estimate, which is most of
 			// a bisync. Zero there would read as "finished".
-			value := strings.TrimSpace(strings.TrimPrefix(part, "ETA "))
-			if d, err := time.ParseDuration(value); err == nil {
+			if d, ok := parseLogDuration(strings.TrimPrefix(part, "ETA ")); ok {
 				eta, known = d, true
 			}
 		}
 	}
 	return speed, eta, known
+}
+
+// longUnits are the durations Go's own parser does not know.
+//
+// rclone formats these fields with its own fs.Duration rather than with
+// time.Duration, and once a duration reaches a day it writes days, weeks and
+// years -- "1d51m48s", "2w1d". time.ParseDuration rejects every one of those,
+// and the two fields it is used on are the ETA, where the estimate would simply
+// be lost, and the elapsed time, where a zero reads as time running backwards
+// and therefore as a new run.
+var longUnits = map[byte]time.Duration{
+	'y': 365 * 24 * time.Hour,
+	'w': 7 * 24 * time.Hour,
+	'd': 24 * time.Hour,
+}
+
+// parseLogDuration reads a duration as rclone writes it.
+//
+// The leading day, week and year components are taken off by hand and the
+// remainder handed to the standard parser, which understands everything from
+// hours down. A component that is zero is omitted entirely, so a day can be
+// followed straight by the minutes.
+func parseLogDuration(s string) (time.Duration, bool) {
+	s = strings.TrimSpace(s)
+	// A dash is rclone saying it cannot estimate. Zero would say the opposite.
+	if s == "" || s == "-" {
+		return 0, false
+	}
+
+	var total time.Duration
+	for len(s) > 0 {
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		// Not a whole number followed by one of the long units: whatever is
+		// left is the standard parser's business.
+		if i == 0 || i >= len(s) {
+			break
+		}
+		unit, ok := longUnits[s[i]]
+		if !ok {
+			break
+		}
+		n, err := strconv.Atoi(s[:i])
+		if err != nil {
+			return 0, false
+		}
+		total += time.Duration(n) * unit
+		s = s[i+1:]
+	}
+
+	if s == "" {
+		return total, true
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, false
+	}
+	return total + d, true
 }
 
 // sizeUnits are the multipliers rclone prints sizes in. The binary ones are the

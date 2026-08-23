@@ -68,6 +68,9 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		}
 		for _, j := range snap.Jobs {
 			fmt.Fprintf(w, "   job %s pid %d  %q\n", j.Kind, j.PID, j.LogFile)
+			if j.ReadError != "" {
+				fmt.Fprintf(w, "      unreadable: %s\n", j.ReadError)
+			}
 			if j.Path1 != "" || j.Path2 != "" {
 				fmt.Fprintf(w, "      paths %q → %q\n", j.Path1, j.Path2)
 			}

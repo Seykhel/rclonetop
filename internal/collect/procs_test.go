@@ -150,6 +150,46 @@ func TestCollectFromFixture(t *testing.T) {
 	}
 }
 
+// The working directory is what a relative path on the command line is
+// relative to. Only the process itself knows it, and only while it is alive.
+func TestCwdIsRead(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "stat"), "btime 1787000000\n")
+	writeFile(t, filepath.Join(root, "self", "stat"), "1 (x) R 0\n")
+	writeProc(t, root, 42, "rclone",
+		[]string{"rclone", "sync", "a", "b", "--log-file", "rclone.log"},
+		"VmRSS:\t 10 kB\n", "rchar: 0\nwchar: 0\n")
+	if err := os.Symlink("/var/lib/rclone", filepath.Join(root, "42", "cwd")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	snap, err := NewProcsAt(root).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := snap.Processes[0].Cwd; got != "/var/lib/rclone" {
+		t.Errorf("cwd = %q, want /var/lib/rclone", got)
+	}
+}
+
+// A process owned by another user refuses the link, and an unreadable working
+// directory has to stay empty rather than become this process's own.
+func TestAnUnreadableCwdIsEmpty(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "stat"), "btime 1787000000\n")
+	writeFile(t, filepath.Join(root, "self", "stat"), "1 (x) R 0\n")
+	writeProc(t, root, 42, "rclone",
+		[]string{"rclone", "sync", "a", "b"}, "VmRSS:\t 10 kB\n", "rchar: 0\nwchar: 0\n")
+
+	snap, err := NewProcsAt(root).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := snap.Processes[0].Cwd; got != "" {
+		t.Errorf("cwd = %q, want empty", got)
+	}
+}
+
 // TestRatesNeedASecondSample checks the delta arithmetic, the measurement that
 // makes a mount's throughput visible without the rc API.
 func TestRatesNeedASecondSample(t *testing.T) {

@@ -154,6 +154,14 @@ func (p *Procs) readProcess(pid int, now time.Time) (model.Process, bool) {
 	if raw, err := os.ReadFile(filepath.Join(dir, "cgroup")); err == nil {
 		proc.Unit = unitFromCgroup(string(raw))
 	}
+	// The working directory resolves the relative paths on the command line --
+	// "--log-file rclone.log" names a file only once this is known. The link
+	// refuses to be read for another user's process, and an empty answer is the
+	// honest one: resolving against rclonetop's own directory would name a
+	// different file with the same conviction.
+	if cwd, err := os.Readlink(filepath.Join(dir, "cwd")); err == nil {
+		proc.Cwd = cwd
+	}
 
 	rd, wr, ok := readIO(filepath.Join(dir, "io"))
 	proc.IOAvailable = ok
