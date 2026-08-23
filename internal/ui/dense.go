@@ -84,7 +84,7 @@ func (m Model) renderDense() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.denseFooter(v, width))
+	b.WriteString(m.denseFooter(v.Seen, v.Errors, width))
 
 	// A final clamp, applied once for every section rather than trusted to
 	// each one's own arithmetic. Some content genuinely cannot fit a very
@@ -300,19 +300,19 @@ func (m Model) memStyle(rss uint64) lipgloss.Style {
 
 // denseFooter summarises which collectors are alive, so an empty screen can
 // always be explained.
-func (m Model) denseFooter(v model.View, width int) string {
+func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Source]error, width int) string {
 	rule := m.style("div_line").Render(strings.Repeat("─", max(width, 1)))
 
 	var parts []string
-	sources := make([]string, 0, len(v.Seen))
-	for s := range v.Seen {
+	sources := make([]string, 0, len(seen))
+	for s := range seen {
 		sources = append(sources, string(s))
 	}
 	sort.Strings(sources)
 	for _, s := range sources {
 		parts = append(parts, m.style("proc_misc").Render(s))
 	}
-	for src, err := range v.Errors {
+	for src, err := range errs {
 		parts = append(parts, m.style("hi_fg").Render(fmt.Sprintf("%s: %v", src, err)))
 	}
 	if len(parts) == 0 {
