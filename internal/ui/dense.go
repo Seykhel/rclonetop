@@ -144,7 +144,9 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 		Bold(true).
 		Render(fmt.Sprintf("%-7s", "SYNC"))
 
-	left, right := p.Left.Label, p.Right.Label
+	// The paths the log recovered when it has seen this pair, and the mangled
+	// filename when it has not.
+	left, right := sideName(p.Left), sideName(p.Right)
 	room := (width - lipgloss.Width(head) - 4) / 2
 	head += m.style("main_fg").Render(Truncate(left, room, true)) +
 		m.style("div_line").Render(" ⇄ ") +
@@ -286,11 +288,20 @@ func (m Model) denseProcess(p model.Process, width int) string {
 		third = "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
 	}
 
-	// Whatever the owning systemd unit logged. Only the unit knows it, and its
-	// own line is suppressed precisely because this process line already says
-	// everything else about the same thing.
+	// Whatever the owning systemd unit and the job's own log recorded. Only
+	// they know it, and the unit's own line is suppressed precisely because
+	// this process line already says everything else about the same thing.
+	//
+	// The two sources are disjoint in practice rather than duplicated: a job
+	// started with --log-file writes nothing to the journal, and one without it
+	// has no log file to read.
+	var errs []model.LogLine
+	errs = append(errs, m.unitErrorsFor(p)...)
+	errs = append(errs, m.jobErrorsFor(p)...)
+
 	return head + "\n" + second + "\n" + third + "\n" +
-		m.renderErrors(m.unitErrorsFor(p), width)
+		m.jobProgress(p) +
+		m.renderErrors(errs, width)
 }
 
 // rateCell renders one direction of throughput, coloured by how close it is to

@@ -18,9 +18,10 @@ go test ./internal/collect -run TestSystemdCollect    # a single test
 go build -o bin/rclonetop ./cmd/rclonetop && ./bin/rclonetop -d
 ```
 
-`-race` is not optional: the process collector hands unit ownership to the systemd collector across
-a goroutine boundary (`Procs.OnProcesses` → `Systemd.NoteProcesses`), and
-`TestConcurrentNoteAndCollect` in `internal/collect/systemd_test.go` only fails under the detector.
+`-race` is not optional: the process collector hands facts to two other collectors across a
+goroutine boundary (`Procs.OnProcesses` → `Systemd.NoteProcesses` and `Logs.NoteProcesses`), and the
+log collector hands paths to a third (`Logs.OnPaths` → `Bisync.NotePaths`).
+`TestConcurrentNoteAndCollect` and `TestConcurrentNotePathsAndCollect` only fail under the detector.
 
 `-d` runs every collector twice, 500 ms apart, prints what each one saw and exits. It is the fastest
 way to inspect collector output without a TTY, and it is what users are asked to paste in bug
@@ -41,8 +42,14 @@ internal/collect/*  →  model.Snapshot  →  model.State  →  internal/ui  →
 **Collectors** (`internal/collect`) each implement `Collector`: `Name`, `Source`, `Interval`,
 `Available`, `Collect`. `collect.Run` starts one goroutine per *available* collector, each on its
 own ticker, and funnels `Result` values into a single channel — a 5 s cache walk must never delay
-the 1 s throughput sample. Intervals differ by design: procs 1 s, localfs 5 s, systemd 5 s,
-bisync 30 s. Collectors are registered in `cmd/rclonetop/main.go`.
+the 1 s throughput sample. Intervals differ by design: procs 1 s, logs 2 s, localfs 5 s,
+systemd 5 s, bisync 30 s. Collectors are registered in `cmd/rclonetop/main.go`, where the
+cross-collector seams are also wired; the order of that slice is what makes `-d` useful, since the
+process collector has to run before the log collector has anything to follow.
+
+A collector that discovers its subject at run time (the log collector, from `--log-file` arguments)
+must return `true` from `Available`. `collect.Run` filters once at startup, before any process has
+been seen, so answering "nothing to do yet" there switches it off for the whole session.
 
 **The model** (`internal/model`) is the shared vocabulary. Two invariants that are easy to break:
 
@@ -55,7 +62,11 @@ bisync 30 s. Collectors are registered in `cmd/rclonetop/main.go`.
   `State.Fail` records an error without discarding earlier data.
 
 Merging is per-source: each collector owns the slices it fills. Cross-source merging on natural keys
-(PID, unit name, the `(srcFs,dstFs)` pair) is deliberately not implemented yet.
+(PID, unit name, the `(srcFs,dstFs)` pair) is deliberately not implemented yet. Where one collector
+holds a fact another needs, it is handed over at collection time rather than merged afterwards —
+see the seams above. The bisync one is exact rather than a guess: `canonicalPath` mangles what the
+log said the way rclone does and matches the result against the listing filename, because the
+mangling cannot be run backwards.
 
 **The UI** (`internal/ui`) is one Bubble Tea `Model`. `Update` handles four messages: window size,
 keys, a clock `tick` (so uptimes advance with no new data), and `resultMsg` from the collector
@@ -78,6 +89,11 @@ data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare
   stretch the time axis by however many sources happen to be enabled.
 - **`effectiveWidth`** resolves a reported width of 0 to 80. Every consumer must agree: the renderer
   treating 0 as 80 while graph sizing treated it as "too narrow" silently dropped the graphs.
+- **A log file is append-only across runs.** One file holds every run of the job that writes it, so
+  the parser has to notice where one ends and the next begins — bisync's "Synching Path1" line, or
+  the elapsed time going backwards, which is the only marker a `sync` or `copy` gives. Without that
+  this morning's failure is still reported as tonight's state. A statistics block is committed only
+  when its "Elapsed time" line arrives: half a block is not a measurement.
 - **systemd units are not simple.** A `Type=oneshot` sits at `activating` for its whole run and
   `inactive` afterwards whether it succeeded or not — hence `Unit.Running`, `Active`, `Failed` and
   `LastRun`. `ExitStatus` is an exit code only when `ExitCode` is `1` (CLD_EXITED); with `2` the same
@@ -93,6 +109,15 @@ constants, so the suite never depends on what is running on the host.
 - `NewProcsAt(root)`, `NewBisyncAt(dir)`, `NewLocalFSAt(mountInfo, cacheRoot)` — filesystem roots.
 - `newSystemdWith(run, scopes)` — injects a `runner func(ctx, name, args...) ([]byte, error)` in
   place of real `systemctl`/`journalctl`, fed canned JSON.
+- `Logs` needs no seam of its own: it is told what to read by `NoteProcesses`, so a test points it
+  at a file in `t.TempDir()` through a fabricated command line. `feed(lines...)` drives the parser
+  alone.
+
+The log fixtures are transcribed from real rclone output, paths neutralised and nothing else
+tidied — the tab inside `Transferred:`, the alignment padding, the trailing `Listed` count. Two of
+them are load-bearing: the JSON entry's own text says 643.062 KiB where its `stats` object says
+658496 bytes, which is what pins the preference for the object; and the mangled listing name in
+`bisync_test.go` was produced by a real `rclone bisync` on a path containing a space.
 
 Any new collector should follow the same shape: a real constructor plus an `...At`/`...With` variant.
 

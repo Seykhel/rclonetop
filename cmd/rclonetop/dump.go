@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Seykhel/rclonetop/internal/collect"
+	"github.com/Seykhel/rclonetop/internal/model"
 	"github.com/Seykhel/rclonetop/internal/ui"
 )
 
@@ -39,7 +40,8 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			continue
 		}
 
-		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+len(snap.SyncPairs)+len(snap.Units) == 0 {
+		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+
+			len(snap.SyncPairs)+len(snap.Units)+len(snap.Jobs) == 0 {
 			fmt.Fprintln(w, "   nothing found")
 		}
 		for _, mnt := range snap.Mounts {
@@ -64,12 +66,36 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 				fmt.Fprintf(w, "      [%d] %s %s\n", e.Priority, stamp(e.At), e.Message)
 			}
 		}
+		for _, j := range snap.Jobs {
+			fmt.Fprintf(w, "   job %s pid %d  %q\n", j.Kind, j.PID, j.LogFile)
+			if j.Path1 != "" || j.Path2 != "" {
+				fmt.Fprintf(w, "      paths %q → %q\n", j.Path1, j.Path2)
+			}
+			// "no statistics yet" and "nothing transferred" are different
+			// answers, and only one of them is a measurement.
+			if j.HaveStats {
+				s := j.Stats
+				fmt.Fprintf(w, "      %s / %s in %d/%d files  checks %d/%d  errors %d (fatal %v)\n",
+					ui.Bytes(s.Bytes, base10), ui.Bytes(s.TotalBytes, base10),
+					s.Transfers, s.TotalTransfers, s.Checks, s.TotalChecks,
+					s.Errors, s.FatalError)
+				fmt.Fprintf(w, "      speed %s  elapsed %s  eta %s\n",
+					ui.Rate(s.Speed, base10), ui.Duration(s.Elapsed), eta(s))
+			} else {
+				fmt.Fprintln(w, "      no statistics block read yet")
+			}
+			fmt.Fprintf(w, "      last line %s  outcome %q (finished %v)\n",
+				stamp(j.At), j.Outcome, j.Finished)
+			for _, e := range j.Errors {
+				fmt.Fprintf(w, "      [%d] %s %s\n", e.Priority, stamp(e.At), e.Message)
+			}
+		}
 		for _, p := range snap.SyncPairs {
 			fmt.Fprintf(w, "   sync %q\n", p.Name)
-			fmt.Fprintf(w, "      left  %-28s %6d files  %s\n",
-				p.Left.Label, p.Left.Files, ui.Bytes(p.Left.Bytes, base10))
-			fmt.Fprintf(w, "      right %-28s %6d files  %s\n",
-				p.Right.Label, p.Right.Files, ui.Bytes(p.Right.Bytes, base10))
+			fmt.Fprintf(w, "      left  %-28s %6d files  %s  %s\n",
+				p.Left.Label, p.Left.Files, ui.Bytes(p.Left.Bytes, base10), p.Left.Path)
+			fmt.Fprintf(w, "      right %-28s %6d files  %s  %s\n",
+				p.Right.Label, p.Right.Files, ui.Bytes(p.Right.Bytes, base10), p.Right.Path)
 			fmt.Fprintf(w, "      drift %d  listed %s  failed %s\n",
 				p.Drift, stamp(p.ListedAt), stamp(p.FailedAt))
 		}
@@ -86,6 +112,15 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		}
 	}
 	return nil
+}
+
+// eta formats an estimate, keeping "rclone cannot say" distinct from "no time
+// left at all".
+func eta(s model.JobStats) string {
+	if !s.ETAKnown {
+		return "unknown"
+	}
+	return ui.Duration(s.ETA)
 }
 
 // stamp formats a timestamp for the dump, distinguishing "never" from a real

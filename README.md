@@ -17,8 +17,9 @@ MOUNT  gdrive: → ~/My Drive
 BISYNC ~/Documents → gdrive:Documents
   pid 193345 · up 4m36s · rss 85 MiB · thr 13
   ↓ 82 KiB/s    ⠀⠀⠀⢠⣾⣷⣶⣤⣀  ↑ 12 KiB/s    ⠀⠀⠀⠀⠀⢀⣠⣴⣾  ·  rd 3.5 MiB · wr 2.9 MiB
+  58% · 2.9 GiB / 4.9 GiB · 1158/4667 files · ETA 2m51s
 
-SYNC   home_user_Documents ⇄ gdrive_Documents
+SYNC   ~/Documents ⇄ gdrive:Documents
   4710 files 5.0 GiB  ⇄  4710 files 5.0 GiB
   in sync · listed 21m46s ago · last failure 4h51m ago
 
@@ -56,12 +57,26 @@ rclonetop reads from whatever is available instead:
 | bisync listings | files and bytes on each side, drift, last run and last failure | done |
 | local filesystem | `fuse.rclone` mounts, and the disk the caches occupy | done |
 | systemd / journald | unit state, how the last run ended, next timer elapse, errors | done |
-| rclone logs | job progress from `--log-file`, plain or `--use-json-log` | planned |
+| rclone logs | job progress from `--log-file`, plain or `--use-json-log`, and the real paths of a bisync pair | done |
 | rc API | exact statistics, when a daemon does expose it | planned |
 
 Sources are independent. Whatever is unavailable is hidden rather than shown as
 zero: a zero and an unreadable counter mean very different things to someone
 checking whether their backup ran.
+
+Progress is a separate question from throughput, and only rclone can answer it.
+The kernel's byte counters say what has gone past; the log says how much there
+was to begin with, so a transfer that is nearly done can be told from one that
+has barely started. rclonetop follows the log file a running rclone was started
+with — from its `--log-file` argument, whether it writes plain text or
+`--use-json-log`, preferring the latter because its byte counts have not been
+rounded on the way out.
+
+The same log is the only place a bisync pair's paths appear in full: the
+listings on disk name a session by mangling both paths into one filename, which
+cannot be undone. What the log says is matched back to the listing by mangling
+it the same way, so the paths shown are the ones that were typed rather than a
+guess at them.
 
 Throughput is graphed from the samples collected while rclonetop runs, in
 braille, eighth-blocks or plain ASCII. Each graph scales to the busiest moment
@@ -80,6 +95,9 @@ the whole of it:
 - **Subprocesses.** `systemctl` and `journalctl` are invoked every few seconds,
   with read-only subcommands, to learn unit state and recent errors. No D-Bus
   library, no shell: arguments are passed directly.
+- **Log files.** The file named by a running rclone's own `--log-file` argument
+  is tailed, incrementally and from near its end: no file is opened that rclone
+  was not already told to write, and nothing is ever written back to it.
 - **Wrapper scripts.** A unit that runs rclone from a shell script never names
   it, so the script itself is read to decide whether the unit is relevant. This
   is bounded to regular files under 256 KiB that begin with a shebang, and only
@@ -90,9 +108,9 @@ the whole of it:
 
 ## Status
 
-Early. Five of the seven sources above work; the log parser and the rc client
-are not written yet. The command line and the configuration keys are expected to
-stay as they are, but nothing is promised before 1.0.
+Early. Six of the seven sources above work; the rc client is not written yet.
+The command line and the configuration keys are expected to stay as they are,
+but nothing is promised before 1.0.
 
 Linux only for now — throughput is measured from `/proc/<pid>/io`, which has no
 direct equivalent on macOS or the BSDs.

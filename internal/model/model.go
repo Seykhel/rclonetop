@@ -124,6 +124,12 @@ type CacheDir struct {
 // SyncSide is one end of a bisync pair, as recorded in its cached listing.
 type SyncSide struct {
 	Label string // the side's name as bisync mangles it into the filename
+
+	// Path is the operand as it was actually written, which only the log
+	// collector can supply. It is empty for a session no log has described,
+	// and the Label above is then all there is to show.
+	Path string
+
 	Files int
 	Bytes uint64
 }
@@ -161,6 +167,89 @@ type LogLine struct {
 	At       time.Time
 	Priority int // syslog severity: 3 is err, 4 warning
 	Message  string
+}
+
+// JobStats is rclone's own accounting for a run: how much of the work it set
+// itself is done.
+//
+// Nothing else here can produce these numbers. /proc measures bytes moved
+// through the kernel, which includes retries and metadata and knows nothing of
+// how many files are still to come; only rclone knows what it set out to do.
+type JobStats struct {
+	Bytes      uint64
+	TotalBytes uint64
+
+	Transfers      int
+	TotalTransfers int
+
+	Checks      int
+	TotalChecks int
+
+	Errors     int
+	FatalError bool
+
+	Deletes int
+	Renames int
+
+	// Speed is rclone's own average over the run, which is a different
+	// quantity from the instantaneous rate /proc gives: it is the figure that
+	// answers "how long will this take", and it is what the ETA is derived
+	// from.
+	Speed   float64
+	Elapsed time.Duration
+
+	// ETA is only meaningful when ETAKnown is set. rclone writes "-" whenever
+	// it cannot estimate -- which is most of a bisync, and all of any run whose
+	// total is not yet known -- and a zero there would read as "done".
+	ETA      time.Duration
+	ETAKnown bool
+}
+
+// Done reports the fraction of the run's bytes that have moved, and whether
+// that fraction means anything. A total of zero is a run with nothing to
+// transfer, not a run that is nought per cent complete.
+func (s JobStats) Done() (float64, bool) {
+	if s.TotalBytes == 0 {
+		return 0, false
+	}
+	return float64(s.Bytes) / float64(s.TotalBytes), true
+}
+
+// Job is one rclone run as described by the log it is writing.
+//
+// The log is the only source that reports progress against a known total while
+// the run is in flight. It is also the only one that writes a bisync pair's
+// paths out in full: the listing filenames mangle them irreversibly.
+type Job struct {
+	// LogFile is the path being tailed, and the identity of the job. One log
+	// file is one run at a time, whatever else changes.
+	LogFile string
+
+	// PID is the process writing the log, when one is still running. It is
+	// zero for a job whose process has exited, which is how a live run is told
+	// from the record of a finished one.
+	PID  int
+	Kind Kind
+
+	// Path1 and Path2 are a bisync pair's operands as the log writes them,
+	// which is to say in full and unmangled.
+	Path1, Path2 string
+
+	Stats     JobStats
+	HaveStats bool
+
+	// At is the timestamp of the last line parsed, not the time it was read.
+	// A log that has stopped moving says so by this standing still.
+	At time.Time
+
+	// Outcome is how the run ended, in rclone's own words -- "successful",
+	// "aborted", "interrupted by a signal" -- and is empty while it is still
+	// going.
+	Outcome  string
+	Finished bool
+
+	Errors []LogLine
+	Source Source
 }
 
 // Unit is a systemd service or timer that drives rclone.
@@ -318,6 +407,7 @@ type Snapshot struct {
 	Caches    []CacheDir
 	SyncPairs []SyncPair
 	Units     []Unit
+	Jobs      []Job
 }
 
 // State is the merged view the UI renders, assembled from the most recent
@@ -328,6 +418,7 @@ type State struct {
 	Caches    []CacheDir
 	SyncPairs []SyncPair
 	Units     []Unit
+	Jobs      []Job
 
 	// Seen records the last time each collector reported successfully, so
 	// the UI can tell "nothing is happening" apart from "this source went
@@ -371,6 +462,9 @@ func (s *State) Apply(snap Snapshot) {
 	}
 	if snap.Units != nil {
 		s.Units = snap.Units
+	}
+	if snap.Jobs != nil {
+		s.Jobs = snap.Jobs
 	}
 	s.Seen[snap.Source] = snap.At
 	delete(s.Errors, snap.Source)

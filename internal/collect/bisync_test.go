@@ -141,6 +141,90 @@ func TestBisyncCollect(t *testing.T) {
 	}
 }
 
+// The listing filename is all the bisync collector has, and it is lossy: every
+// slash, colon and space in both paths became an underscore. The log collector
+// sees the paths written out in full and hands them over here.
+//
+// The stem below is exactly what rclone produced for "/tmp/.../My Docs" in a
+// real run, with the path neutralised: the space is mangled the same way the
+// separators are.
+func TestPathsFromTheLogAreAttachedToTheirSession(t *testing.T) {
+	dir := t.TempDir()
+	stem := "home_user_My_Documents..gdrive_Documents"
+	writeListing(t, filepath.Join(dir, stem+".path1.lst"),
+		`-      100 - - 2026-08-20T11:03:20.000000000+0000 "a.md"`,
+	)
+	writeListing(t, filepath.Join(dir, stem+".path2.lst"),
+		`-      100 - - 2026-08-20T11:03:20.000000000+0000 "a.md"`,
+	)
+
+	b := NewBisyncAt(dir)
+	b.NotePaths("/home/user/My Documents/", "gdrive:Documents/")
+
+	snap, err := b.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	p := snap.SyncPairs[0]
+	if p.Left.Path != "/home/user/My Documents/" || p.Right.Path != "gdrive:Documents/" {
+		t.Errorf("paths = %q / %q, want the ones from the log", p.Left.Path, p.Right.Path)
+	}
+	// The mangled labels stay: they are what is on disk, and the display falls
+	// back to them for a session no log has described.
+	if p.Left.Label != "home_user_My_Documents" {
+		t.Errorf("label = %q, want it left alone", p.Left.Label)
+	}
+}
+
+// A pair of paths that does not canonicalise to this session's name describes a
+// different session. Attaching it anyway would put one job's paths against
+// another job's file counts.
+func TestPathsFromAnotherSessionAreNotAttached(t *testing.T) {
+	dir := t.TempDir()
+	stem := "home_user_Documents..gdrive_Documents"
+	writeListing(t, filepath.Join(dir, stem+".path1.lst"),
+		`-      100 - - 2026-08-20T11:03:20.000000000+0000 "a.md"`,
+	)
+	writeListing(t, filepath.Join(dir, stem+".path2.lst"),
+		`-      100 - - 2026-08-20T11:03:20.000000000+0000 "a.md"`,
+	)
+
+	b := NewBisyncAt(dir)
+	b.NotePaths("/home/user/Pictures/", "gdrive:Pictures/")
+
+	snap, _ := b.Collect(context.Background())
+	if got := snap.SyncPairs[0].Left.Path; got != "" {
+		t.Errorf("path = %q, want none: the log described a different pair", got)
+	}
+}
+
+// NotePaths is called from the log collector's goroutine while Collect runs on
+// this one. Without the lock Go aborts the program on the concurrent map
+// access, which takes the whole display down with it.
+func TestConcurrentNotePathsAndCollect(t *testing.T) {
+	dir := t.TempDir()
+	stem := "home_user_Documents..gdrive_Documents"
+	writeListing(t, filepath.Join(dir, stem+".path1.lst"),
+		`-      100 - - 2026-08-20T11:03:20.000000000+0000 "a.md"`,
+	)
+
+	b := NewBisyncAt(dir)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			b.NotePaths("/home/user/Documents/", "gdrive:Documents/")
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		if _, err := b.Collect(context.Background()); err != nil {
+			t.Errorf("Collect: %v", err)
+			break
+		}
+	}
+	<-done
+}
+
 func TestBisyncReportsLastFailure(t *testing.T) {
 	dir := t.TempDir()
 	stem := "a..b"
