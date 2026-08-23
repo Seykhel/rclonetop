@@ -35,61 +35,56 @@ func boxColorFor(k model.Kind) string {
 }
 
 // renderDense draws preset 0: the whole picture in as few lines as possible.
+//
+// Every cross-source question is settled before this runs, by State.Resolve.
+// What is left here is layout and colour, which is the only thing this file
+// should have an opinion about.
 func (m Model) renderDense() string {
 	width := effectiveWidth(m.width)
+	v := m.state.Resolve()
 
 	var b strings.Builder
 	b.WriteString(m.denseHeader(width))
 	b.WriteString("\n\n")
 
-	procs := append([]model.Process(nil), m.state.Processes...)
 	switch {
-	case len(m.state.Seen) == 0:
+	case len(v.Seen) == 0:
 		// Before any collector has reported, "nothing is running" would be a
 		// claim rclonetop has not yet checked.
 		b.WriteString(m.style("inactive_fg").Render("collecting…"))
 		b.WriteString("\n")
-	case len(procs) == 0:
+	case len(v.Procs) == 0:
 		b.WriteString(m.style("inactive_fg").Render("no rclone process running"))
 		b.WriteString("\n")
 	default:
-		// Long-lived services first, then the busiest: a mount that is always
-		// there should not jump around as one-shot jobs come and go.
-		sort.SliceStable(procs, func(i, j int) bool {
-			li, lj := isService(procs[i].Kind), isService(procs[j].Kind)
-			if li != lj {
-				return li
-			}
-			return procs[i].ReadRate+procs[i].WriteRate > procs[j].ReadRate+procs[j].WriteRate
-		})
-		for i, p := range procs {
+		for i, row := range v.Procs {
 			if i > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(m.denseProcess(p, width))
+			b.WriteString(m.denseProcess(row, width))
 		}
 	}
 
-	for _, mnt := range m.orphanMounts() {
+	for _, mnt := range v.Orphans {
 		b.WriteString("\n")
 		b.WriteString(m.denseOrphanMount(mnt, width))
 	}
-	for _, pair := range m.state.SyncPairs {
+	for _, pair := range v.Pairs {
 		b.WriteString("\n")
 		b.WriteString(m.denseSyncPair(pair, width))
 	}
-	if line := m.denseUnits(width); line != "" {
+	if line := m.denseUnits(v.Units, width); line != "" {
 		b.WriteString("\n")
 		b.WriteString(line)
 	}
-	if line := m.denseCaches(); line != "" {
+	if line := m.denseCaches(v.Caches); line != "" {
 		b.WriteString("\n")
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.denseFooter(width))
+	b.WriteString(m.denseFooter(v, width))
 
 	// A final clamp, applied once for every section rather than trusted to
 	// each one's own arithmetic. Some content genuinely cannot fit a very
@@ -97,29 +92,6 @@ func (m Model) renderDense() string {
 	// a line that wraps corrupts the layout of everything below it. lipgloss
 	// cuts without breaking the escape sequences.
 	return lipgloss.NewStyle().MaxWidth(width).Render(b.String())
-}
-
-// orphanMounts are FUSE mounts with no live rclone process behind them. That
-// combination is a real failure mode -- the process died and left the
-// mountpoint wedged -- and it is invisible to a process listing alone.
-func (m Model) orphanMounts() []model.Mount {
-	if len(m.state.Mounts) == 0 {
-		return nil
-	}
-	served := make(map[string]bool, len(m.state.Processes))
-	for _, p := range m.state.Processes {
-		if p.Kind == model.KindMount {
-			served[p.Target] = true
-		}
-	}
-
-	var orphans []model.Mount
-	for _, mnt := range m.state.Mounts {
-		if !served[mnt.Mountpoint] {
-			orphans = append(orphans, mnt)
-		}
-	}
-	return orphans
 }
 
 // denseOrphanMount renders a mount whose process is gone.
@@ -188,8 +160,8 @@ func (m Model) side(s model.SyncSide) string {
 }
 
 // denseCaches renders rclone's local cache footprint on a single line.
-func (m Model) denseCaches() string {
-	if len(m.state.Caches) == 0 {
+func (m Model) denseCaches(caches []model.CacheDir) string {
+	if len(caches) == 0 {
 		return ""
 	}
 
@@ -200,7 +172,7 @@ func (m Model) denseCaches() string {
 
 	var parts []string
 	var scannedAt time.Time
-	for _, c := range m.state.Caches {
+	for _, c := range caches {
 		parts = append(parts,
 			m.style("inactive_fg").Render(c.Kind+" ")+
 				m.gradientStyle("cached", 0.6).Render(Bytes(c.Bytes, m.opts.Base10))+
@@ -219,10 +191,6 @@ func (m Model) denseCaches() string {
 			m.style("inactive_fg").Render("scanned "+Ago(m.now.Sub(scannedAt)))
 	}
 	return line
-}
-
-func isService(k model.Kind) bool {
-	return k == model.KindMount || k == model.KindServe || k == model.KindRCD
 }
 
 // denseHeader is the title line: name, host and clock, separated by a rule that
@@ -248,7 +216,8 @@ func (m Model) denseHeader(width int) string {
 
 // denseProcess renders one rclone process as two lines: what it is, and what it
 // is moving.
-func (m Model) denseProcess(p model.Process, width int) string {
+func (m Model) denseProcess(row model.ProcRow, width int) string {
+	p := row.Process
 	label := strings.ToUpper(string(p.Kind))
 	kindStyle := lipgloss.NewStyle().
 		Foreground(m.opts.Theme.Color(boxColorFor(p.Kind)).Lipgloss()).
@@ -288,20 +257,13 @@ func (m Model) denseProcess(p model.Process, width int) string {
 		third = "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
 	}
 
-	// Whatever the owning systemd unit and the job's own log recorded. Only
-	// they know it, and the unit's own line is suppressed precisely because
-	// this process line already says everything else about the same thing.
-	//
-	// The two sources are disjoint in practice rather than duplicated: a job
-	// started with --log-file writes nothing to the journal, and one without it
-	// has no log file to read.
-	var errs []model.LogLine
-	errs = append(errs, m.unitErrorsFor(p)...)
-	errs = append(errs, m.jobErrorsFor(p)...)
-
+	// The errors below were gathered by Resolve: whatever the owning systemd
+	// unit and the job's own log recorded. The unit's own line is suppressed
+	// precisely because this process line already says everything else about
+	// the same thing, so this is where they have to appear.
 	return head + "\n" + second + "\n" + third + "\n" +
-		m.jobProgress(p) +
-		m.renderErrors(errs, width)
+		m.jobProgress(row.Job) +
+		m.renderErrors(row.Errors, width)
 }
 
 // rateCell renders one direction of throughput, coloured by how close it is to
@@ -338,19 +300,19 @@ func (m Model) memStyle(rss uint64) lipgloss.Style {
 
 // denseFooter summarises which collectors are alive, so an empty screen can
 // always be explained.
-func (m Model) denseFooter(width int) string {
+func (m Model) denseFooter(v model.View, width int) string {
 	rule := m.style("div_line").Render(strings.Repeat("─", max(width, 1)))
 
 	var parts []string
-	sources := make([]string, 0, len(m.state.Seen))
-	for s := range m.state.Seen {
+	sources := make([]string, 0, len(v.Seen))
+	for s := range v.Seen {
 		sources = append(sources, string(s))
 	}
 	sort.Strings(sources)
 	for _, s := range sources {
 		parts = append(parts, m.style("proc_misc").Render(s))
 	}
-	for src, err := range m.state.Errors {
+	for src, err := range v.Errors {
 		parts = append(parts, m.style("hi_fg").Render(fmt.Sprintf("%s: %v", src, err)))
 	}
 	if len(parts) == 0 {

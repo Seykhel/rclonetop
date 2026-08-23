@@ -13,7 +13,7 @@ import (
 // plain renders a model's unit section with the styling stripped, so the tests
 // assert on what is written rather than on escape sequences.
 func plain(m Model, width int) string {
-	out := m.denseUnits(width)
+	out := m.denseUnits(m.state.Resolve().Units, width)
 	var b strings.Builder
 	for _, line := range strings.Split(out, "\n") {
 		b.WriteString(stripANSI(line))
@@ -283,7 +283,11 @@ func TestJournalErrorIsFlattenedAndTrimmed(t *testing.T) {
 }
 
 func TestNoUnitsRendersNothing(t *testing.T) {
-	if got := modelWith(nil, time.Unix(1787433722, 0)).denseUnits(80); got != "" {
+	m := modelWith(nil, time.Unix(1787433722, 0))
+	if rows := m.state.Resolve().Units; len(rows) != 0 {
+		t.Fatalf("got %d rows out of no units", len(rows))
+	}
+	if got := m.denseUnits(nil, 80); got != "" {
 		t.Errorf("got %q, want an empty section", got)
 	}
 }

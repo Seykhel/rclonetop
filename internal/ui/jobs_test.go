@@ -10,13 +10,27 @@ import (
 )
 
 // plainProcess renders one process block with the styling stripped.
+//
+// It goes through Resolve rather than fabricating a row, so these tests keep
+// asserting on what the process line says once the job and the journal have
+// been folded into it -- which is the thing that used to be done inline here.
 func plainProcess(m Model, p model.Process, width int) string {
 	var b strings.Builder
-	for _, line := range strings.Split(m.denseProcess(p, width), "\n") {
+	for _, line := range strings.Split(m.denseProcess(rowFor(m, p.PID), width), "\n") {
 		b.WriteString(stripANSI(line))
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// rowFor is the resolved row of one process, by PID.
+func rowFor(m Model, pid int) model.ProcRow {
+	for _, row := range m.state.Resolve().Procs {
+		if row.Process.PID == pid {
+			return row
+		}
+	}
+	return model.ProcRow{}
 }
 
 func modelWithJobs(procs []model.Process, jobs []model.Job, now time.Time) Model {

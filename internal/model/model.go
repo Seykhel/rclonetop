@@ -45,6 +45,14 @@ const (
 	KindUnknown Kind = "unknown"
 )
 
+// IsService reports whether this kind of job is a long-lived service rather
+// than a run with a beginning and an end. The distinction decides where it sits
+// on screen: a mount that is always there should not be reordered by one-shot
+// jobs coming and going.
+func (k Kind) IsService() bool {
+	return k == KindMount || k == KindServe || k == KindRCD
+}
+
 // Process is a running rclone process discovered on the host.
 type Process struct {
 	PID     int

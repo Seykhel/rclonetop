@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -26,95 +25,15 @@ const errorFadeWindow = 6 * time.Hour
 
 // denseUnits renders the systemd services and timers driving rclone.
 //
-// Services and their timers are folded into one line each. Presenting them
-// separately would double the length of the section and split the two halves of
-// a single answer: a timer's schedule is only meaningful next to the result of
-// the job it starts.
-func (m Model) denseUnits(width int) string {
-	if len(m.state.Units) == 0 {
-		return ""
-	}
-
-	// A unit whose process is already on screen would otherwise be described
-	// twice, and the two descriptions would say the same thing in different
-	// words: "up 14h40m" against "running for 14h40m". The process line wins,
-	// because it carries the throughput; what only the unit knows -- its
-	// journal errors -- is moved there instead.
-	shown := m.unitsShownAsProcesses()
-
-	timers := make(map[string]model.Unit)
-	var services []model.Unit
-	for _, u := range m.state.Units {
-		if u.IsTimer() {
-			// Two timers can start the same service. Keep the one due first,
-			// since that is the answer to "when does this next run"; picking
-			// arbitrarily would make the display depend on map ordering.
-			if u.Triggers == "" {
-				continue
-			}
-			if prev, ok := timers[u.Triggers]; ok && sooner(prev.NextElapse, u.NextElapse) {
-				continue
-			}
-			timers[u.Triggers] = u
-			continue
-		}
-		if shown[u.Name] {
-			continue
-		}
-		services = append(services, u)
-	}
-	// Timers whose service was not itself reported still deserve a line.
-	for target, t := range timers {
-		if !shown[target] && !hasUnit(services, target) {
-			services = append(services, model.Unit{
-				Name: target, Scope: t.Scope, Source: t.Source,
-			})
-		}
-	}
-	if len(services) == 0 {
-		return ""
-	}
-
-	// Failures first, then by name, so a problem never scrolls out of reach
-	// behind healthy units.
-	sort.SliceStable(services, func(i, j int) bool {
-		fi, fj := services[i].Failed(), services[j].Failed()
-		if fi != fj {
-			return fi
-		}
-		return services[i].Name < services[j].Name
-	})
-
+// Which units get a line, in what order, and with which timer folded into them
+// is settled by State.Resolve; what is left here is how one of those rows is
+// written out.
+func (m Model) denseUnits(rows []model.UnitRow, width int) string {
 	var b strings.Builder
-	for _, u := range services {
-		b.WriteString(m.denseUnit(u, timers[u.Name], width))
+	for _, row := range rows {
+		b.WriteString(m.denseUnit(row, width))
 	}
 	return b.String()
-}
-
-// unitsShownAsProcesses names the units already represented by a process line.
-func (m Model) unitsShownAsProcesses() map[string]bool {
-	shown := make(map[string]bool)
-	for _, p := range m.state.Processes {
-		if p.Unit != "" {
-			shown[p.Unit] = true
-		}
-	}
-	return shown
-}
-
-// unitErrorsFor returns the journal errors of the unit that owns a process, so
-// they can be shown against the process rather than lost with its unit line.
-func (m Model) unitErrorsFor(p model.Process) []model.LogLine {
-	if p.Unit == "" {
-		return nil
-	}
-	for _, u := range m.state.Units {
-		if u.Name == p.Unit {
-			return u.Errors
-		}
-	}
-	return nil
 }
 
 // renderErrors draws the most recent journal error and a count of the rest.
@@ -147,17 +66,10 @@ func (m Model) renderErrors(errs []model.LogLine, width int) string {
 	return out
 }
 
-func hasUnit(units []model.Unit, name string) bool {
-	for _, u := range units {
-		if u.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 // denseUnit renders one service together with its timer.
-func (m Model) denseUnit(u model.Unit, timer model.Unit, width int) string {
+func (m Model) denseUnit(row model.UnitRow, width int) string {
+	u, timer := row.Unit, row.Timer
+
 	head := lipgloss.NewStyle().
 		Foreground(m.opts.Theme.Color("proc_box").Lipgloss()).
 		Bold(true).
@@ -178,7 +90,7 @@ func (m Model) denseUnit(u model.Unit, timer model.Unit, width int) string {
 	head += m.style("main_fg").Render(name) + suffix
 
 	var parts []string
-	if last := u.LastRun(timer.LastTrigger); !last.IsZero() {
+	if last := row.LastRun; !last.IsZero() {
 		if u.Running() {
 			// A job that is up has not "last run" at any point: the timestamp
 			// measures how long it has been going, and "last 14h ago" reads as
@@ -207,9 +119,8 @@ func (m Model) denseUnit(u model.Unit, timer model.Unit, width int) string {
 	// What the unit's own log said, which systemd never sees: a job started
 	// with --log-file writes nothing to the journal, so between runs this is
 	// the only account of how the last one went.
-	job, hasJob := m.jobForUnit(u)
-	if hasJob && job.Outcome != "" {
-		parts = append(parts, m.outcomeStyle(job).Render(job.Outcome))
+	if row.Job.Outcome != "" {
+		parts = append(parts, m.outcomeStyle(row.Job).Render(row.Job.Outcome))
 	}
 
 	line := head
@@ -217,27 +128,9 @@ func (m Model) denseUnit(u model.Unit, timer model.Unit, width int) string {
 		line += "\n  " + strings.Join(parts, m.style("div_line").Render(" · "))
 	}
 	line += "\n"
-
-	// The journal's and the log's are disjoint in practice rather than
-	// duplicated: whichever of the two the job writes to, it does not write to
-	// the other.
-	errs := append(append([]model.LogLine(nil), u.Errors...), job.Errors...)
-	line += m.renderErrors(errs, width)
+	line += m.renderErrors(row.Errors, width)
 
 	return line
-}
-
-// jobForUnit finds what the log collector read from the file this unit names.
-func (m Model) jobForUnit(u model.Unit) (model.Job, bool) {
-	if u.LogFile == "" {
-		return model.Job{}, false
-	}
-	for _, j := range m.state.Jobs {
-		if j.LogFile == u.LogFile {
-			return j, true
-		}
-	}
-	return model.Job{}, false
 }
 
 // outcomeStyle colours how a run ended. Only "successful" is good news; the
@@ -293,18 +186,6 @@ func (m Model) fadedAlarm(at time.Time) lipgloss.Style {
 		m.opts.Theme.Color("inactive_fg"),
 		frac)
 	return lipgloss.NewStyle().Foreground(c.Lipgloss())
-}
-
-// sooner reports whether a comes before b, treating "never" as last.
-func sooner(a, b time.Time) bool {
-	switch {
-	case a.IsZero():
-		return false
-	case b.IsZero():
-		return true
-	default:
-		return a.Before(b)
-	}
 }
 
 // until renders how long remains before an instant.
