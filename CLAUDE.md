@@ -18,10 +18,15 @@ go test ./internal/collect -run TestSystemdCollect    # a single test
 go build -o bin/rclonetop ./cmd/rclonetop && ./bin/rclonetop -d
 ```
 
-`-race` is not optional: the process collector hands facts to two other collectors across a
-goroutine boundary (`Procs.OnProcesses` → `Systemd.NoteProcesses` and `Logs.NoteProcesses`), and the
-log collector hands paths to a third (`Logs.OnPaths` → `Bisync.NotePaths`).
-`TestConcurrentNoteAndCollect` and `TestConcurrentNotePathsAndCollect` only fail under the detector.
+`-race` is not optional: facts are handed between collectors across goroutine boundaries —
+`Procs.OnProcesses` → `Systemd.NoteProcesses` and `Logs.NoteProcesses`, `Systemd.OnLogFiles` →
+`Logs.NoteUnitLogs`, `Logs.OnPaths` → `Bisync.NotePaths`. `TestConcurrentNoteAndCollect` and
+`TestConcurrentNotePathsAndCollect` only fail under the detector.
+
+Nor may a fixture depend on the wall clock. A journal fixture with a hard-coded epoch passed for a
+day and then began failing on the clock rather than on the code, because retention drops an entry
+older than `errorRetention`; anything asserting that an error is *kept* builds its timestamp from
+`time.Now` (`recentEpoch` in `systemd_test.go`).
 
 `-d` runs every collector twice, 500 ms apart, prints what each one saw and exits. It is the fastest
 way to inspect collector output without a TTY, and it is what users are asked to paste in bug
@@ -44,8 +49,11 @@ internal/collect/*  →  model.Snapshot  →  model.State  →  internal/ui  →
 own ticker, and funnels `Result` values into a single channel — a 5 s cache walk must never delay
 the 1 s throughput sample. Intervals differ by design: procs 1 s, logs 2 s, localfs 5 s,
 systemd 5 s, bisync 30 s. Collectors are registered in `cmd/rclonetop/main.go`, where the
-cross-collector seams are also wired; the order of that slice is what makes `-d` useful, since the
-process collector has to run before the log collector has anything to follow.
+cross-collector seams are also wired. The order of that slice is the order the facts travel in and
+only matters for `-d`, which runs them in turn: processes name the units and the logs of what is
+running now, units name the logs of what is not, and the logs name the paths the bisync listings
+cannot spell. Any other order makes `-d` show each collector missing what the next was about to
+tell it.
 
 A collector that discovers its subject at run time (the log collector, from `--log-file` arguments)
 must return `true` from `Available`. `collect.Run` filters once at startup, before any process has

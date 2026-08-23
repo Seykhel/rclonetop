@@ -58,6 +58,9 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 				fmt.Fprintf(w, "      active since %s  inactive since %s\n",
 					stamp(u.ActiveEnter), stamp(u.InactiveEnter))
 			}
+			if u.LogFile != "" {
+				fmt.Fprintf(w, "      log %q\n", u.LogFile)
+			}
 			if u.IsTimer() {
 				fmt.Fprintf(w, "      triggers %s  last %s  next %s\n",
 					u.Triggers, stamp(u.LastTrigger), stamp(u.NextElapse))
@@ -67,7 +70,13 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			}
 		}
 		for _, j := range snap.Jobs {
-			fmt.Fprintf(w, "   job %s pid %d  %q\n", j.Kind, j.PID, j.LogFile)
+			kind := string(j.Kind)
+			if kind == "" {
+				// Nothing has said what this job is: no process to read a
+				// command line from, and the log only says so for bisync.
+				kind = "-"
+			}
+			fmt.Fprintf(w, "   job %s pid %d  %q\n", kind, j.PID, j.LogFile)
 			if j.ReadError != "" {
 				fmt.Fprintf(w, "      unreadable: %s\n", j.ReadError)
 			}

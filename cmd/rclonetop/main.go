@@ -100,15 +100,22 @@ func run() error {
 	procs.OnProcesses(systemd.NoteProcesses)
 	procs.OnProcesses(logs.NoteProcesses)
 	logs.OnPaths(bisync.NotePaths)
+	// And the other way for a job that is not running: the unit names the log
+	// file even between runs, which on a timer is nearly all of the time.
+	systemd.OnLogFiles(logs.NoteUnitLogs)
 
-	// The order matters for -d, which runs them in turn: the process collector
-	// has to go first for the log collector to have anything to follow.
+	// The order is the order the facts travel in, and it matters for -d, which
+	// runs them in turn rather than in parallel: processes name the units and
+	// the logs of what is running now, units name the logs of what is not, and
+	// the logs name the paths the bisync listings cannot spell. Collected the
+	// other way round, -d would show each collector missing what the one after
+	// it was about to tell it.
 	collectors := []collect.Collector{
 		procs,
-		bisync,
-		collect.NewLocalFS(),
 		systemd,
 		logs,
+		bisync,
+		collect.NewLocalFS(),
 	}
 
 	if flags.debug {

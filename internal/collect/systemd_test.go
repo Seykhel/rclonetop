@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +15,18 @@ import (
 	"github.com/Seykhel/rclonetop/internal/model"
 	"time"
 )
+
+// recentEpoch is a journal timestamp an hour in the past, in the microseconds
+// journald reports.
+//
+// The fixtures here used a fixed epoch, and it worked until the day it did
+// not: retention drops an entry older than a day, so the tests that assert an
+// error is *kept* began failing twenty-four hours after the epoch was written
+// down -- on the clock rather than on the code. Anything that asserts retention
+// has to be fresh whenever the suite happens to run.
+func recentEpoch() string {
+	return strconv.FormatInt(time.Now().Add(-time.Hour).UnixMicro(), 10)
+}
 
 func TestParseShowBlocks(t *testing.T) {
 	// Real output. systemctl accepts several units in one call and separates
@@ -278,9 +294,21 @@ func (f *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte
 			return nil, err
 		}
 	}
-	for pattern, out := range f.responses {
+	// Longest pattern first, and never in map order.
+	//
+	// One call can contain several patterns -- the properties query asks for
+	// ActiveState and ExecStart together -- and ranging over the map would
+	// answer with whichever Go happened to visit first, so the same test would
+	// pass or fail from one run to the next. The most specific match is the
+	// one that was meant.
+	patterns := make([]string, 0, len(f.responses))
+	for pattern := range f.responses {
+		patterns = append(patterns, pattern)
+	}
+	sort.Slice(patterns, func(i, j int) bool { return len(patterns[i]) > len(patterns[j]) })
+	for _, pattern := range patterns {
 		if strings.Contains(key, pattern) {
-			return out, nil
+			return f.responses[pattern], nil
 		}
 	}
 	return nil, fmt.Errorf("unexpected command: %s", key)
@@ -323,7 +351,7 @@ ActiveEnterTimestamp=@1787380000
 InactiveEnterTimestamp=
 MainPID=0
 `),
-		"journalctl": []byte(`{"PRIORITY":"3","__REALTIME_TIMESTAMP":"1787417576870643","MESSAGE":"vfs cache: RootURL not set","__CURSOR":"c1"}` + "\n"),
+		"journalctl": []byte(`{"PRIORITY":"3","__REALTIME_TIMESTAMP":"` + recentEpoch() + `","MESSAGE":"vfs cache: RootURL not set","__CURSOR":"c1"}` + "\n"),
 	}}
 
 	s := newSystemdWith(r.run, []string{"user"})
@@ -393,7 +421,7 @@ func TestSystemdJournalCursorAdvances(t *testing.T) {
 		"list-timers":    []byte(`[]`),
 		"-p ExecStart":   []byte("Id=rclone-mount.service\nExecStart={ path=/usr/bin/rclone ; argv[]=/usr/bin/rclone mount a: /b }\n"),
 		"-p ActiveState": []byte("Id=rclone-mount.service\nActiveState=active\nSubState=running\nResult=success\n"),
-		"journalctl":     []byte(`{"PRIORITY":"3","__REALTIME_TIMESTAMP":"1787417576870643","MESSAGE":"boom","__CURSOR":"cursor-1"}` + "\n"),
+		"journalctl":     []byte(`{"PRIORITY":"3","__REALTIME_TIMESTAMP":"` + recentEpoch() + `","MESSAGE":"boom","__CURSOR":"cursor-1"}` + "\n"),
 	}}
 	s := newSystemdWith(r.run, []string{"user"})
 
@@ -427,7 +455,7 @@ func TestSystemdKeepsRecentErrors(t *testing.T) {
 		"list-timers":    []byte(`[]`),
 		"-p ExecStart":   []byte("Id=rclone-mount.service\nExecStart={ path=/usr/bin/rclone ; argv[]=/usr/bin/rclone mount a: /b }\n"),
 		"-p ActiveState": []byte("Id=rclone-mount.service\nActiveState=active\nSubState=running\nResult=success\n"),
-		"journalctl":     []byte(`{"PRIORITY":"3","__REALTIME_TIMESTAMP":"1787417576870643","MESSAGE":"boom","__CURSOR":"c1"}` + "\n"),
+		"journalctl":     []byte(`{"PRIORITY":"3","__REALTIME_TIMESTAMP":"` + recentEpoch() + `","MESSAGE":"boom","__CURSOR":"c1"}` + "\n"),
 	}}
 	s := newSystemdWith(r.run, []string{"user"})
 
@@ -683,5 +711,208 @@ func TestErrorsSurviveWhenNothingHasSucceededSince(t *testing.T) {
 	}
 	if got := s.forgetResolved("user", failing); len(got) != 1 {
 		t.Errorf("a failing unit lost its errors: %+v", got)
+	}
+}
+
+// The two shapes that actually occur. Both wrapper scripts on the host this was
+// developed against write the same thing, and neither puts the path in the
+// argument literally:
+//
+//	LOG_DIR="$HOME/.local/state/jd-backup"
+//	rclone bisync … -v --log-file "$LOG_DIR/bisync.log"
+//
+// Refusing to resolve that leaves the feature finding nothing at all, so a
+// literal assignment is followed -- which is reading two lines, not running
+// them. Everything that would require actually executing the script is refused.
+func TestLogFileFromScript(t *testing.T) {
+	const home = "/home/user"
+
+	cases := []struct {
+		name   string
+		script string
+		home   string
+		want   string
+	}{
+		{
+			name: "through a variable, as both real wrappers write it",
+			script: `#!/usr/bin/env bash
+set -uo pipefail
+
+LOG_DIR="$HOME/.local/state/jd-backup"
+mkdir -p "$LOG_DIR"
+
+rclone bisync "$HOME/Documents" gdrive:Documents \
+    --resilient --recover \
+    -v --log-file "$LOG_DIR/bisync.log"
+`,
+			home: home,
+			want: "/home/user/.local/state/jd-backup/bisync.log",
+		},
+		{
+			name:   "spelled out in full",
+			script: "#!/bin/sh\nrclone sync a b --log-file /var/log/rclone/sync.log\n",
+			home:   home,
+			want:   "/var/log/rclone/sync.log",
+		},
+		{
+			name:   "joined with an equals sign",
+			script: `#!/bin/sh` + "\n" + `rclone sync a b --log-file="$HOME/rclone.log"` + "\n",
+			home:   home,
+			want:   "/home/user/rclone.log",
+		},
+		{
+			name:   "braced variable",
+			script: "#!/bin/sh\nD=/srv/logs\nrclone sync a b --log-file \"${D}/rclone.log\"\n",
+			home:   home,
+			want:   "/srv/logs/rclone.log",
+		},
+		{
+			// A system unit's $HOME is root's, or whatever User= says. Guessing
+			// it would name a file belonging to somebody else.
+			name:   "no home to resolve against",
+			script: "#!/bin/sh\nrclone sync a b --log-file \"$HOME/rclone.log\"\n",
+			home:   "",
+			want:   "",
+		},
+		{
+			// Working out what this produces means running it.
+			name:   "command substitution",
+			script: "#!/bin/sh\nrclone sync a b --log-file \"$(date +%F).log\"\n",
+			home:   home,
+			want:   "",
+		},
+		{
+			name:   "default-value expansion is still shell evaluation",
+			script: "#!/bin/sh\nrclone sync a b --log-file \"${LOG_DIR:-/tmp}/x.log\"\n",
+			home:   home,
+			want:   "",
+		},
+		{
+			name:   "a variable that is never assigned",
+			script: "#!/bin/sh\nrclone sync a b --log-file \"$MYSTERY/rclone.log\"\n",
+			home:   home,
+			want:   "",
+		},
+		{
+			// Relative to whatever directory systemd started the unit in.
+			name:   "relative path",
+			script: "#!/bin/sh\nrclone sync a b --log-file rclone.log\n",
+			home:   home,
+			want:   "",
+		},
+		{
+			name:   "no log at all",
+			script: "#!/bin/sh\nrclone sync a b -v\n",
+			home:   home,
+			want:   "",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := logFileFromScript([]byte(c.script), c.home); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The unit is what knows where a scheduled job writes, and it knows it between
+// runs -- which is the whole point, because between runs is when there is no
+// process to ask.
+func TestLogFilesAreDiscoveredFromUnits(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "jd-bisync")
+	if err := os.WriteFile(wrapper, []byte(
+		"#!/usr/bin/env bash\n"+
+			`LOG_DIR="$HOME/.local/state/jd-backup"`+"\n"+
+			`rclone bisync "$HOME/Documents" gdrive:Documents -v --log-file "$LOG_DIR/bisync.log"`+"\n",
+	), 0o755); err != nil {
+		t.Fatalf("writing the wrapper: %v", err)
+	}
+
+	r := &fakeRunner{responses: map[string][]byte{
+		"--version":   []byte("systemd 257\n"),
+		"list-units":  []byte(`[{"unit":"jd-bisync.service","load":"loaded","active":"inactive","sub":"dead"}]`),
+		"list-timers": []byte(`[]`),
+		"-p ExecStart": []byte("Id=jd-bisync.service\n" +
+			"ExecStart={ path=" + wrapper + " ; argv[]=" + wrapper + " ; ignore_errors=no }\n"),
+		"-p ActiveState": []byte("Id=jd-bisync.service\n" +
+			"ActiveState=inactive\nSubState=dead\nResult=success\n" +
+			"ExecMainCode=1\nExecMainStatus=0\nMainPID=0\n" +
+			"ExecStart={ path=" + wrapper + " ; argv[]=" + wrapper + " ; ignore_errors=no }\n"),
+		"journalctl": []byte(""),
+	}}
+
+	s := newSystemdWith(r.run, []string{"user"})
+	// The home the script's $HOME stands for. In a user unit that is the user
+	// rclonetop is running as; the fixture stands in for it.
+	s.home = dir
+
+	var got []string
+	s.OnLogFiles(func(paths []string) { got = paths })
+
+	if _, err := s.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	want := filepath.Join(dir, ".local/state/jd-backup/bisync.log")
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("got %v, want [%s]", got, want)
+	}
+}
+
+// A unit that names rclone directly needs no script read at all.
+func TestLogFileFromExecStartItself(t *testing.T) {
+	r := &fakeRunner{responses: map[string][]byte{
+		"--version":   []byte("systemd 257\n"),
+		"list-units":  []byte(`[{"unit":"rclone-sync.service","load":"loaded","active":"inactive","sub":"dead"}]`),
+		"list-timers": []byte(`[]`),
+		"-p ActiveState": []byte("Id=rclone-sync.service\n" +
+			"ActiveState=inactive\nSubState=dead\nResult=success\n" +
+			"ExecMainCode=1\nExecMainStatus=0\nMainPID=0\n" +
+			"ExecStart={ path=/usr/bin/rclone ; argv[]=/usr/bin/rclone sync a b --log-file /var/log/rclone.log ; ignore_errors=no }\n"),
+		"journalctl": []byte(""),
+	}}
+
+	s := newSystemdWith(r.run, []string{"user"})
+	var got []string
+	s.OnLogFiles(func(paths []string) { got = paths })
+
+	if _, err := s.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(got) != 1 || got[0] != "/var/log/rclone.log" {
+		t.Errorf("got %v, want [/var/log/rclone.log]", got)
+	}
+}
+
+// A truncated line must not take the program down. firstShellWord split on
+// whitespace and took the first field, and a value that is nothing but a
+// newline has no fields at all.
+func TestLogFileFromScriptSurvivesATruncatedLine(t *testing.T) {
+	for _, script := range []string{
+		"#!/bin/sh\nrclone sync a b --log-file \n",
+		"#!/bin/sh\nrclone sync a b --log-file=\n",
+		"#!/bin/sh\nrclone sync a b --log-file \"unterminated\n",
+		"#!/bin/sh\nrclone sync a b --log-file ",
+	} {
+		if got := logFileFromScript([]byte(script), "/home/user"); got != "" {
+			t.Errorf("script %q gave %q, want nothing", script, got)
+		}
+	}
+}
+
+// The assignment that counts is the one in force where rclone is invoked. A
+// script that reuses the name afterwards -- for a second job, or to tidy up --
+// says nothing about the first.
+func TestTheAssignmentBeforeTheCommandWins(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"LOG_DIR=/srv/first\n" +
+		"rclone sync a b --log-file \"$LOG_DIR/rclone.log\"\n" +
+		"LOG_DIR=/srv/second\n"
+
+	if got := logFileFromScript([]byte(script), "/home/user"); got != "/srv/first/rclone.log" {
+		t.Errorf("got %q, want /srv/first/rclone.log", got)
 	}
 }

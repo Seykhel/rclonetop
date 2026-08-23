@@ -204,15 +204,49 @@ func (m Model) denseUnit(u model.Unit, timer model.Unit, width int) string {
 		parts = append(parts, m.style("hi_fg").Render(exit))
 	}
 
+	// What the unit's own log said, which systemd never sees: a job started
+	// with --log-file writes nothing to the journal, so between runs this is
+	// the only account of how the last one went.
+	job, hasJob := m.jobForUnit(u)
+	if hasJob && job.Outcome != "" {
+		parts = append(parts, m.outcomeStyle(job).Render(job.Outcome))
+	}
+
 	line := head
 	if len(parts) > 0 {
 		line += "\n  " + strings.Join(parts, m.style("div_line").Render(" · "))
 	}
 	line += "\n"
 
-	line += m.renderErrors(u.Errors, width)
+	// The journal's and the log's are disjoint in practice rather than
+	// duplicated: whichever of the two the job writes to, it does not write to
+	// the other.
+	errs := append(append([]model.LogLine(nil), u.Errors...), job.Errors...)
+	line += m.renderErrors(errs, width)
 
 	return line
+}
+
+// jobForUnit finds what the log collector read from the file this unit names.
+func (m Model) jobForUnit(u model.Unit) (model.Job, bool) {
+	if u.LogFile == "" {
+		return model.Job{}, false
+	}
+	for _, j := range m.state.Jobs {
+		if j.LogFile == u.LogFile {
+			return j, true
+		}
+	}
+	return model.Job{}, false
+}
+
+// outcomeStyle colours how a run ended. Only "successful" is good news; the
+// rest -- aborted, interrupted -- are the reason anyone is looking.
+func (m Model) outcomeStyle(job model.Job) lipgloss.Style {
+	if job.Outcome == "successful" {
+		return m.gradientStyle("free", 1)
+	}
+	return m.style("hi_fg")
 }
 
 // unitState renders the state badge.

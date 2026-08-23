@@ -91,6 +91,20 @@ type Systemd struct {
 	// failed a minute ago looking clean.
 	recent map[string][]model.LogLine
 
+	// logFiles is the log each unit tells rclone to write, keyed by scope and
+	// name, and empty for a unit that names none. It is touched only from
+	// Collect, unlike the maps above, and is cached for the same reason
+	// relevant is: working it out costs a file read, and a unit's command line
+	// does not change between ticks.
+	logFiles map[string]string
+
+	// home is what $HOME stands for in a user unit's wrapper script. It is
+	// empty for the system scope, where the home belongs to root or to
+	// whatever User= says and guessing it would name somebody else's file.
+	home string
+
+	observers []func(paths []string)
+
 	checked   bool
 	available bool
 }
@@ -101,13 +115,73 @@ func NewSystemd() *Systemd {
 }
 
 func newSystemdWith(run runner, scopes []string) *Systemd {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
 	return &Systemd{
 		run:      run,
 		scopes:   scopes,
 		relevant: make(map[string]bool),
 		cursors:  make(map[string]string),
 		recent:   make(map[string][]model.LogLine),
+		logFiles: make(map[string]string),
+		home:     home,
 	}
+}
+
+// OnLogFiles registers a callback invoked with the log files the relevant units
+// tell rclone to write.
+//
+// This is how the log collector learns about a job between its runs. The
+// process collector can only report a log file while the job is running, which
+// on a half-hourly timer is about a minute in thirty; the unit knows it the
+// rest of the time.
+func (s *Systemd) OnLogFiles(fn func(paths []string)) {
+	s.observers = append(s.observers, fn)
+}
+
+// logFileForUnit works out where a unit's rclone writes, and remembers it.
+//
+// Two places, in order of certainty: the recorded command line, when the unit
+// runs rclone itself, and otherwise the wrapper script it runs instead -- read
+// under the same bounds that already apply to deciding whether a unit is
+// relevant at all.
+func (s *Systemd) logFileForUnit(scope, name, execStart string) string {
+	key := scope + "/" + name
+	if cached, ok := s.logFiles[key]; ok {
+		return cached
+	}
+
+	found := logFileFromArgs(execStartArgs(execStart))
+	if found == "" || !path.IsAbs(found) {
+		found = ""
+		// $HOME is only answerable for a unit in the user's own scope.
+		home := ""
+		if scope == "user" {
+			home = s.home
+		}
+		for _, p := range execStartPaths(execStart) {
+			if body := readWrapper(p); body != nil {
+				if found = logFileFromScript(body, home); found != "" {
+					break
+				}
+			}
+		}
+	}
+
+	s.logFiles[key] = found
+	return found
+}
+
+// execStartArgs splits the argument vector systemd records, so a unit that
+// invokes rclone directly can be read the same way a live process is.
+func execStartArgs(execStart string) []string {
+	m := execStartArgv.FindStringSubmatch(execStart)
+	if m == nil {
+		return nil
+	}
+	return strings.Fields(m[1])
 }
 
 // execRunner runs a command, capturing enough of its diagnosis to report.
@@ -222,6 +296,18 @@ func (s *Systemd) Collect(ctx context.Context) (model.Snapshot, error) {
 		units = append(units, found...)
 	}
 
+	paths := make([]string, 0, len(units))
+	seen := make(map[string]bool, len(units))
+	for _, u := range units {
+		if u.LogFile != "" && !seen[u.LogFile] {
+			seen[u.LogFile] = true
+			paths = append(paths, u.LogFile)
+		}
+	}
+	for _, fn := range s.observers {
+		fn(paths)
+	}
+
 	snap := model.Snapshot{At: now, Source: model.SourceSystemd, Units: units}
 	if len(failures) == len(s.scopes) {
 		// Every scope failed, so the empty list is not a finding. Reporting the
@@ -267,7 +353,7 @@ func (s *Systemd) collectScope(ctx context.Context, scope string) ([]model.Unit,
 		"Id", "ActiveState", "SubState", "Result",
 		"ExecMainCode", "ExecMainStatus",
 		"InactiveExitTimestamp", "ActiveEnterTimestamp", "InactiveEnterTimestamp",
-		"MainPID")
+		"MainPID", "ExecStart")
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +378,9 @@ func (s *Systemd) collectScope(ctx context.Context, scope string) ([]model.Unit,
 			if t, ok := parseUnixTimestamp(d["InactiveEnterTimestamp"]); ok {
 				u.InactiveEnter = t
 			}
+			// Where this unit's rclone writes, which is knowable between runs
+			// and is the only way to follow a job that is not running now.
+			u.LogFile = s.logFileForUnit(scope, name, d["ExecStart"])
 		}
 		if t, ok := timers[name]; ok {
 			u.Triggers = t.Activates
@@ -750,8 +839,18 @@ func execStartPaths(execStart string) []string {
 // only a shell script. It is deliberately narrow: regular files under a size
 // limit that begin with a shebang, so it never grinds through a binary.
 func scriptMentionsRclone(p string) bool {
+	body := readWrapper(p)
+	return body != nil && bytes.Contains(body, []byte("rclone"))
+}
+
+// readWrapper returns a wrapper script's contents, or nil when the path is not
+// one this collector will read.
+//
+// Deliberately narrow: regular files under a size limit that begin with a
+// shebang, so it never grinds through a binary a unit happens to name.
+func readWrapper(p string) []byte {
 	if p == "" || !path.IsAbs(p) {
-		return false
+		return nil
 	}
 
 	// Opened with O_NONBLOCK and inspected through the descriptor, never by
@@ -761,28 +860,169 @@ func scriptMentionsRclone(p string) bool {
 	// that open return instead, and the fstat below rejects it anyway.
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return false
+		return nil
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > wrapperScanLimit {
-		return false
+		return nil
 	}
 
 	body := make([]byte, wrapperScanLimit)
 	n, err := io.ReadFull(f, body)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return false
+		return nil
 	}
 	body = body[:n]
 
 	// Only shell scripts. Without the shebang check this would grind through
-	// any binary a unit happens to name, and match on an incidental string.
+	// any binary, and match on an incidental string.
 	if !bytes.HasPrefix(body, []byte("#!")) {
-		return false
+		return nil
 	}
-	return bytes.Contains(body, []byte("rclone"))
+	return body
+}
+
+// shellAssignment matches a plain assignment at the start of a line:
+// VAR=value, with or without quotes around the value.
+var shellAssignment = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S+)`)
+
+// shellVariable matches a reference, braced or bare.
+var shellVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+
+// maxExpansionDepth bounds how far one assignment may refer to another, so a
+// script whose variables refer to each other in a circle cannot spin here.
+const maxExpansionDepth = 4
+
+// logFileFromScript finds the log file a wrapper script tells rclone to write.
+//
+// A unit that runs rclone from a script is the common arrangement, and the
+// script rarely spells the path out: both wrappers this was developed against
+// write the same thing,
+//
+//	LOG_DIR="$HOME/.local/state/jd-backup"
+//	rclone bisync … -v --log-file "$LOG_DIR/bisync.log"
+//
+// so refusing to follow a variable would leave this finding nothing at all. A
+// plain assignment is therefore substituted, and $HOME with it when the unit
+// runs as the user rclonetop is running as.
+//
+// That is reading two lines, not running them, and the line between the two is
+// drawn deliberately: command substitution, default-value expansion, a variable
+// that is never assigned, or a path that does not come out absolute all mean
+// this returns nothing. Working out what those produce means executing the
+// script, which is not something a monitor may do.
+//
+// home is the directory $HOME stands for, and is empty when there is no honest
+// answer -- a system unit's home belongs to root or to whatever User= says.
+func logFileFromScript(body []byte, home string) string {
+	raw := logFileArgument(string(body))
+	if raw == "" {
+		return ""
+	}
+
+	// Only the assignments above the command, because those are the ones in
+	// force where rclone is invoked. A script that reuses the name afterwards
+	// -- to tidy up, or for a second job -- says nothing about this one.
+	before := string(body)
+	if i := strings.Index(before, "--log-file"); i >= 0 {
+		before = before[:i]
+	}
+
+	vars := map[string]string{}
+	for _, m := range shellAssignment.FindAllStringSubmatch(before, -1) {
+		vars[m[1]] = unquote(m[2])
+	}
+	if home != "" {
+		vars["HOME"] = home
+	}
+
+	value, ok := expandShell(unquote(raw), vars, maxExpansionDepth)
+	if !ok || !path.IsAbs(value) {
+		// A relative path is relative to whatever directory systemd started
+		// the unit in, which is not this one.
+		return ""
+	}
+	return value
+}
+
+// logFileArgument finds the --log-file argument in shell source, in either
+// spelling, and returns it exactly as written.
+func logFileArgument(script string) string {
+	for _, form := range []string{"--log-file=", "--log-file "} {
+		i := strings.Index(script, form)
+		if i < 0 {
+			continue
+		}
+		rest := strings.TrimLeft(script[i+len(form):], " \t")
+		return firstShellWord(rest)
+	}
+	return ""
+}
+
+// firstShellWord takes one argument off the front of a command line, honouring
+// a single level of quoting.
+func firstShellWord(s string) string {
+	if s == "" {
+		return ""
+	}
+	if q := s[0]; q == '"' || q == '\'' {
+		if end := strings.IndexByte(s[1:], q); end >= 0 {
+			return s[:end+2]
+		}
+		return ""
+	}
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == ';' || r == '&' || r == '|'
+	})
+	if len(fields) == 0 {
+		// The flag was the last thing on the line, with nothing after it. Not
+		// a path, and indexing the empty result would take the program down.
+		return ""
+	}
+	return fields[0]
+}
+
+// unquote strips one layer of shell quoting.
+func unquote(s string) string {
+	if len(s) >= 2 {
+		if q := s[0]; (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+// expandShell substitutes the variables it can and refuses everything else.
+func expandShell(s string, vars map[string]string, depth int) (string, bool) {
+	// Anything whose value depends on running something is refused outright:
+	// command substitution, and the ${VAR:-default} family, which is a
+	// conditional in disguise.
+	if strings.Contains(s, "$(") || strings.Contains(s, "`") || strings.Contains(s, ":-") {
+		return "", false
+	}
+	if depth <= 0 {
+		return "", false
+	}
+
+	ok := true
+	out := shellVariable.ReplaceAllStringFunc(s, func(ref string) string {
+		name := strings.Trim(ref, "${}")
+		value, known := vars[name]
+		if !known {
+			ok = false
+			return ""
+		}
+		// An assignment may itself be written in terms of another.
+		nested, good := expandShell(value, vars, depth-1)
+		if !good {
+			ok = false
+			return ""
+		}
+		return nested
+	})
+	return out, ok
 }
 
 // unitFromCgroup extracts the owning unit from /proc/<pid>/cgroup.
