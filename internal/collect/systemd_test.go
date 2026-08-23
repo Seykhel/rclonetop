@@ -916,3 +916,135 @@ func TestTheAssignmentBeforeTheCommandWins(t *testing.T) {
 		t.Errorf("got %q, want /srv/first/rclone.log", got)
 	}
 }
+
+// The parsing is textual, so it has to know what is not a command.
+func TestLogFileFromScriptIgnoresComments(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"# old flag was --log-file /var/log/old.log\n" +
+		"rclone sync a b --log-file /var/log/current.log\n"
+
+	if got := logFileFromScript([]byte(script), "/home/user"); got != "/var/log/current.log" {
+		t.Errorf("got %q, want the line that is not a comment", got)
+	}
+}
+
+// A commented-out flag and nothing else means nothing was found, not that the
+// stale path is current.
+func TestAnEntirelyCommentedFlagFindsNothing(t *testing.T) {
+	script := "#!/bin/sh\n# --log-file /var/log/old.log\nrclone sync a b\n"
+	if got := logFileFromScript([]byte(script), "/home/user"); got != "" {
+		t.Errorf("got %q from a comment", got)
+	}
+}
+
+// Two invocations, two spellings. Whichever comes first is the one whose
+// variables were resolved, so it must also be the one whose value is taken --
+// otherwise the answer is a path neither command writes.
+func TestTheFirstInvocationIsTheOneRead(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"LOG_DIR=/srv/first\n" +
+		"rclone sync a b --log-file \"$LOG_DIR/one.log\"\n" +
+		"LOG_DIR=/srv/second\n" +
+		"rclone sync c d --log-file=\"$LOG_DIR/two.log\"\n"
+
+	if got := logFileFromScript([]byte(script), "/home/user"); got != "/srv/first/one.log" {
+		t.Errorf("got %q, want /srv/first/one.log", got)
+	}
+}
+
+// export is how a great many scripts write an assignment.
+func TestExportedAssignmentsAreRead(t *testing.T) {
+	script := "#!/bin/sh\nexport LOG_DIR=/srv/logs\nrclone sync a b --log-file \"$LOG_DIR/x.log\"\n"
+	if got := logFileFromScript([]byte(script), "/home/user"); got != "/srv/logs/x.log" {
+		t.Errorf("got %q, want /srv/logs/x.log", got)
+	}
+}
+
+// One assignment may be written in terms of another. Resolving $HOME costs a
+// level of its own, so the budget has to allow for it.
+func TestAssignmentsMayReferToEachOther(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"STATE=\"$HOME/.local/state\"\n" +
+		"LOG_DIR=\"$STATE/jd-backup\"\n" +
+		"rclone sync a b --log-file \"$LOG_DIR/x.log\"\n"
+
+	want := "/home/user/.local/state/jd-backup/x.log"
+	if got := logFileFromScript([]byte(script), "/home/user"); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// systemd records an argument vector without quoting, and a shell -c string is
+// one argument that this splits on spaces. A path that ends it must not keep
+// the quote that closed it: the tail would ask for a file of that name for ever.
+func TestExecStartArgumentsAreUnquoted(t *testing.T) {
+	execStart := `{ path=/bin/sh ; argv[]=/bin/sh -c "rclone sync a b --log-file /var/log/x.log" ; ignore_errors=no }`
+	if got := logFileFromArgs(execStartArgs(execStart)); got != "/var/log/x.log" {
+		t.Errorf("got %q, want /var/log/x.log", got)
+	}
+}
+
+// A unit that goes away must not leave its log path behind: the next unit to
+// wear the name would be followed to the old one's file.
+func TestTheLogFileCacheIsPruned(t *testing.T) {
+	s := newSystemdWith(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("unused")
+	}, []string{"user"})
+	s.logFiles["user/gone.service"] = "/var/log/gone.log"
+	s.logFiles["user/stays.service"] = "/var/log/stays.log"
+
+	s.prune("user", []string{"stays.service"})
+
+	if _, ok := s.logFiles["user/gone.service"]; ok {
+		t.Error("a unit that is no longer listed kept its log path")
+	}
+	if _, ok := s.logFiles["user/stays.service"]; !ok {
+		t.Error("a unit still listed lost its log path")
+	}
+}
+
+// One scope failing must not retract the other's findings, and must not retract
+// its own from the last time it answered. The log collector replaces its whole
+// set on every call, so a path missing for one tick is a tail dropped -- and an
+// idle job's last line can easily be more than an hour old, which is when a tail
+// with no process is forgotten.
+func TestAFailingScopeDoesNotRetractWhatItFound(t *testing.T) {
+	// Scoped patterns, so each scope answers for its own units. The show
+	// pattern has to be longer than "-p ActiveState" to win the longest match.
+	unitBlock := func(name, log string) []byte {
+		return []byte("Id=" + name + "\n" +
+			"ActiveState=inactive\nSubState=dead\nResult=success\n" +
+			"ExecStart={ path=/usr/bin/rclone ; argv[]=/usr/bin/rclone sync a b --log-file " + log + " ; ignore_errors=no }\n")
+	}
+	r := &fakeRunner{responses: map[string][]byte{
+		"--version":                []byte("systemd 257\n"),
+		"--user list-units":        []byte(`[{"unit":"rclone-user.service","active":"inactive","sub":"dead"}]`),
+		"--system list-units":      []byte(`[{"unit":"rclone-system.service","active":"inactive","sub":"dead"}]`),
+		"--user list-timers":       []byte(`[]`),
+		"--system list-timers":     []byte(`[]`),
+		"--user show --no-pager":   unitBlock("rclone-user.service", "/var/log/user.log"),
+		"--system show --no-pager": unitBlock("rclone-system.service", "/var/log/system.log"),
+		"journalctl":               []byte(""),
+	}}
+	s := newSystemdWith(r.run, []string{"user", "system"})
+
+	var got []string
+	s.OnLogFiles(func(paths []string) { got = paths })
+
+	if _, err := s.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("first pass found %v, want both scopes' logs", got)
+	}
+
+	// The system scope stops answering. What it told us last time is still
+	// true: the unit did not go away, the bus did.
+	r.errs = map[string]error{"--system list-units": errors.New("no system bus")}
+	if _, err := s.Collect(context.Background()); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("a scope failing retracted its log: %v", got)
+	}
+}

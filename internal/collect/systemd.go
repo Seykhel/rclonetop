@@ -91,6 +91,12 @@ type Systemd struct {
 	// failed a minute ago looking clean.
 	recent map[string][]model.LogLine
 
+	// discovered is the set of log files each scope last reported, kept per
+	// scope because the log collector replaces its whole set on every call: a
+	// scope that could not be reached this tick must not retract what it found
+	// on the last one, or the tail is dropped and its position lost.
+	discovered map[string][]string
+
 	// logFiles is the log each unit tells rclone to write, keyed by scope and
 	// name, and empty for a unit that names none. It is touched only from
 	// Collect, unlike the maps above, and is cached for the same reason
@@ -120,13 +126,14 @@ func newSystemdWith(run runner, scopes []string) *Systemd {
 		home = ""
 	}
 	return &Systemd{
-		run:      run,
-		scopes:   scopes,
-		relevant: make(map[string]bool),
-		cursors:  make(map[string]string),
-		recent:   make(map[string][]model.LogLine),
-		logFiles: make(map[string]string),
-		home:     home,
+		run:        run,
+		scopes:     scopes,
+		relevant:   make(map[string]bool),
+		cursors:    make(map[string]string),
+		recent:     make(map[string][]model.LogLine),
+		logFiles:   make(map[string]string),
+		discovered: make(map[string][]string),
+		home:       home,
 	}
 }
 
@@ -181,7 +188,15 @@ func execStartArgs(execStart string) []string {
 	if m == nil {
 		return nil
 	}
-	return strings.Fields(m[1])
+	args := strings.Fields(m[1])
+	for i, a := range args {
+		// systemd records the vector without quoting it back, so a shell -c
+		// string arrives as several fields with the quotes that opened and
+		// closed it still glued to the first and last. A path carrying one
+		// would be asked for by that name for ever.
+		args[i] = strings.Trim(a, `"'`)
+	}
+	return args
 }
 
 // execRunner runs a command, capturing enough of its diagnosis to report.
@@ -294,14 +309,25 @@ func (s *Systemd) Collect(ctx context.Context) (model.Snapshot, error) {
 			continue
 		}
 		units = append(units, found...)
+
+		// Recorded per scope, and only for a scope that answered.
+		paths := make([]string, 0, len(found))
+		for _, u := range found {
+			if u.LogFile != "" {
+				paths = append(paths, u.LogFile)
+			}
+		}
+		s.discovered[scope] = paths
 	}
 
 	paths := make([]string, 0, len(units))
 	seen := make(map[string]bool, len(units))
-	for _, u := range units {
-		if u.LogFile != "" && !seen[u.LogFile] {
-			seen[u.LogFile] = true
-			paths = append(paths, u.LogFile)
+	for _, scope := range s.scopes {
+		for _, p := range s.discovered[scope] {
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
 		}
 	}
 	for _, fn := range s.observers {
@@ -421,6 +447,18 @@ func (s *Systemd) prune(scope string, services []string) {
 		delete(s.relevant, key)
 		delete(s.cursors, key)
 		delete(s.recent, key)
+	}
+
+	// Walked separately rather than inside the loop above, which is driven by
+	// the keys of relevant. The two maps are filled from the same place today,
+	// so that would work today; a log path left behind is followed to the file
+	// a retired unit wrote for as long as rclonetop runs, which is too quiet a
+	// failure to make it depend on that staying true.
+	for key := range s.logFiles {
+		if !strings.HasPrefix(key, scope+"/") || live[key] || strings.HasSuffix(key, ".timer") {
+			continue
+		}
+		delete(s.logFiles, key)
 	}
 }
 
@@ -885,14 +923,20 @@ func readWrapper(p string) []byte {
 }
 
 // shellAssignment matches a plain assignment at the start of a line:
-// VAR=value, with or without quotes around the value.
-var shellAssignment = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S+)`)
+// VAR=value, with or without quotes around the value, and with or without the
+// export a great many scripts write in front of it.
+var shellAssignment = regexp.MustCompile(
+	`(?m)^\s*(?:export\s+|declare\s+(?:-\w+\s+)*|local\s+)?([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S+)`)
 
 // shellVariable matches a reference, braced or bare.
 var shellVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
 // maxExpansionDepth bounds how far one assignment may refer to another, so a
 // script whose variables refer to each other in a circle cannot spin here.
+//
+// A level is spent on each substitution, including the one that resolves $HOME
+// at the end of a chain, so four allows the shapes that occur -- LOG_DIR built
+// from STATE built from $HOME -- with one to spare.
 const maxExpansionDepth = 4
 
 // logFileFromScript finds the log file a wrapper script tells rclone to write.
@@ -917,21 +961,23 @@ const maxExpansionDepth = 4
 // home is the directory $HOME stands for, and is empty when there is no honest
 // answer -- a system unit's home belongs to root or to whatever User= says.
 func logFileFromScript(body []byte, home string) string {
-	raw := logFileArgument(string(body))
+	// A commented-out flag is not a command. Left in, an old path someone
+	// struck out months ago is tailed and presented as the unit's current
+	// state.
+	script := stripComments(string(body))
+
+	raw, at := logFileArgument(script)
 	if raw == "" {
 		return ""
 	}
 
-	// Only the assignments above the command, because those are the ones in
+	// Only the assignments above that command, because those are the ones in
 	// force where rclone is invoked. A script that reuses the name afterwards
-	// -- to tidy up, or for a second job -- says nothing about this one.
-	before := string(body)
-	if i := strings.Index(before, "--log-file"); i >= 0 {
-		before = before[:i]
-	}
-
+	// -- to tidy up, or for a second job -- says nothing about this one, and
+	// the value and its variables have to be taken from the same invocation or
+	// the answer is a path neither of them writes.
 	vars := map[string]string{}
-	for _, m := range shellAssignment.FindAllStringSubmatch(before, -1) {
+	for _, m := range shellAssignment.FindAllStringSubmatch(script[:at], -1) {
 		vars[m[1]] = unquote(m[2])
 	}
 	if home != "" {
@@ -948,17 +994,41 @@ func logFileFromScript(body []byte, home string) string {
 }
 
 // logFileArgument finds the --log-file argument in shell source, in either
-// spelling, and returns it exactly as written.
-func logFileArgument(script string) string {
+// spelling, and returns it exactly as written along with where it was found.
+//
+// The two spellings compete by position rather than by preference: a script
+// with two invocations must not have the value of one read against the
+// variables of the other.
+func logFileArgument(script string) (value string, at int) {
+	best := -1
+	var rest string
 	for _, form := range []string{"--log-file=", "--log-file "} {
 		i := strings.Index(script, form)
-		if i < 0 {
+		if i < 0 || (best >= 0 && i > best) {
 			continue
 		}
-		rest := strings.TrimLeft(script[i+len(form):], " \t")
-		return firstShellWord(rest)
+		best = i
+		rest = strings.TrimLeft(script[i+len(form):], " \t")
 	}
-	return ""
+	if best < 0 {
+		return "", 0
+	}
+	return firstShellWord(rest), best
+}
+
+// stripComments blanks out the lines a shell would never run.
+//
+// Whole-line comments only. A '#' partway through a line starts one too, but
+// cutting there would also cut a path that legitimately contains one, and the
+// case that occurs is a flag struck out by putting a hash in front of it.
+func stripComments(script string) string {
+	lines := strings.Split(script, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "#") {
+			lines[i] = ""
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // firstShellWord takes one argument off the front of a command line, honouring
