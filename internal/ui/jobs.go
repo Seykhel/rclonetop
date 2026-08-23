@@ -32,7 +32,18 @@ func (m Model) jobFor(p model.Process) (model.Job, bool) {
 // started.
 func (m Model) jobProgress(p model.Process) string {
 	job, ok := m.jobFor(p)
-	if !ok || !job.HaveStats {
+	if !ok {
+		return ""
+	}
+	if job.ReadError != "" {
+		// The same distinction the throughput line makes for an unreadable
+		// /proc/<pid>/io: a job that stands still because nobody can read its
+		// log looks exactly like one with nothing to do, and saying which is
+		// the whole point.
+		return "  " + m.style("inactive_fg").Render("log unreadable: ") +
+			m.style("hi_fg").Render(oneLine(job.ReadError)) + "\n"
+	}
+	if !job.HaveStats {
 		return ""
 	}
 	s := job.Stats

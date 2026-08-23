@@ -97,7 +97,12 @@ the whole of it:
   library, no shell: arguments are passed directly.
 - **Log files.** The file named by a running rclone's own `--log-file` argument
   is tailed, incrementally and from near its end: no file is opened that rclone
-  was not already told to write, and nothing is ever written back to it.
+  was not already told to write, and nothing is ever written back to it. When
+  that argument is a relative path it is resolved against the process's own
+  working directory, read from `/proc/<pid>/cwd` — and when that cannot be read,
+  which is the case for another user's process, the log is left alone rather
+  than resolved against rclonetop's directory, where the same name would name a
+  different file.
 - **Wrapper scripts.** A unit that runs rclone from a shell script never names
   it, so the script itself is read to decide whether the unit is relevant. This
   is bounded to regular files under 256 KiB that begin with a shebang, and only

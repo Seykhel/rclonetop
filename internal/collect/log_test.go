@@ -194,6 +194,121 @@ func TestTruncationIsFollowed(t *testing.T) {
 	}
 }
 
+// One log file nobody can read must not silence the rest.
+//
+// The realistic case: rclonetop running as a user beside a system rclone whose
+// --log-file is mode 0640 under /var/log. The command line is world-readable so
+// the path is discovered, and the open then fails on every tick for ever. A
+// failure returned alongside the snapshot makes both consumers throw the
+// snapshot away -- the UI calls Fail instead of Apply -- so every job from every
+// other file disappears too.
+func TestAnUnreadableFileDoesNotSilenceTheOthers(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read anything, so the permission cannot be staged")
+	}
+	dir := t.TempDir()
+	readable := filepath.Join(dir, "readable.log")
+	forbidden := filepath.Join(dir, "forbidden.log")
+	writeLog(t, readable, "2026/08/22 23:52:22 INFO  : Bisync successful")
+	writeLog(t, forbidden, "2026/08/22 23:52:22 INFO  : Bisync successful")
+	if err := os.Chmod(forbidden, 0); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{
+		{PID: 11, Kind: model.KindBisync, Args: []string{"rclone", "bisync", "a", "b", "--log-file", readable}},
+		{PID: 22, Kind: model.KindSync, Args: []string{"rclone", "sync", "a", "b", "--log-file", forbidden}},
+	})
+
+	snap, err := l.Collect(context.Background())
+	if err != nil {
+		t.Errorf("Collect returned %v, which makes the UI discard the whole snapshot", err)
+	}
+	if !jobFor(t, snap, readable).Finished {
+		t.Error("the readable file's job was lost with the unreadable one")
+	}
+	// Saying why beats leaving a job that never moves with no explanation.
+	if got := jobFor(t, snap, forbidden).ReadError; got == "" {
+		t.Error("the unreadable file is reported as if it were simply quiet")
+	}
+}
+
+// A log written faster than this collector reads makes the tail jump to the
+// newest window. Rotation and truncation both drop the half-read block when
+// they do that; the jump did not, so the stale opening of one block could be
+// closed by the tail of another and commit as one mixed sample.
+func TestTheCatchUpJumpDropsTheHalfReadBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rclone.log")
+
+	// A block that opens and stops: the bytes line arrives, the rest does not.
+	lines := []string{
+		"2026/08/22 17:45:33 NOTICE: ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+	}
+	writeLog(t, path, lines...)
+
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{{PID: 11, Kind: model.KindSync,
+		Args: []string{"rclone", "sync", "a", "b", "--log-file", path}}})
+	l.Collect(context.Background())
+
+	// More than the read budget, so the next pass jumps rather than catching up,
+	// and lands on what would close the block above.
+	filler := make([]string, 0, 12000)
+	for i := 0; i < 12000; i++ {
+		filler = append(filler, "2026/08/22 17:45:34 INFO  : notes/file: Set directory modification time (using SetModTime)")
+	}
+	appendLog(t, path, filler...)
+	appendLog(t, path,
+		"Checks:              9418 / 9418, 100%, Listed 11259",
+		"Elapsed time:        47.6s",
+		"",
+	)
+
+	snap, _ := l.Collect(context.Background())
+	if job := jobFor(t, snap, path); job.HaveStats {
+		t.Errorf("a block was committed from two different samples: %+v", job.Stats)
+	}
+}
+
+// A relative --log-file resolves against rclone's working directory, not
+// rclonetop's. Taking it as typed opens whatever happens to sit under that name
+// here -- the wrong file, quietly.
+func TestARelativeLogFileIsResolvedAgainstTheProcess(t *testing.T) {
+	dir := t.TempDir()
+	writeLog(t, filepath.Join(dir, "rclone.log"), "2026/08/22 23:52:22 INFO  : Bisync successful")
+
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{{PID: 11, Kind: model.KindSync, Cwd: dir,
+		Args: []string{"rclone", "sync", "a", "b", "--log-file", "rclone.log"}}})
+
+	snap, err := l.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if !jobFor(t, snap, filepath.Join(dir, "rclone.log")).Finished {
+		t.Error("the log was not found where the process would have written it")
+	}
+}
+
+// Without the process's working directory there is nothing to resolve against,
+// and guessing means opening a file that belongs to someone else.
+func TestARelativeLogFileWithoutACwdIsNotFollowed(t *testing.T) {
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{{PID: 11, Kind: model.KindSync,
+		Args: []string{"rclone", "sync", "a", "b", "--log-file", "rclone.log"}}})
+
+	snap, err := l.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snap.Jobs) != 0 {
+		t.Errorf("followed a path resolved against the wrong directory: %+v", snap.Jobs)
+	}
+}
+
 // A snapshot must not change under the UI after it has been handed over.
 //
 // The tail prunes its retained errors in place, and the UI holds the previous
@@ -319,6 +434,89 @@ func TestParsePlainStatsBlock(t *testing.T) {
 	}
 	if want := time.Date(2026, 8, 22, 17, 45, 33, 0, time.Local); !tail.job.At.Equal(want) {
 		t.Errorf("timestamp = %s, want %s", tail.job.At, want)
+	}
+}
+
+// rclone does not format durations the way Go does. Once a duration reaches a
+// day it writes "1d51m48s", and time.ParseDuration rejects the "d" outright --
+// so the estimate is dropped exactly where it matters most, on the multi-day
+// first sync of a slow link.
+//
+// The block below was captured from a real run held at 1 KiB/s.
+func TestETABeyondADayIsRead(t *testing.T) {
+	tail := feed(
+		"2026/08/23 18:04:11 NOTICE: ",
+		"Transferred:   \t       12 KiB / 95.367 MiB, 0%, 1.091 KiB/s, ETA 1d51m48s",
+		"Checks:                 0 / 0, -, Listed 1",
+		"Transferred:            0 / 1, 0%",
+		"Elapsed time:        11.0s",
+		"",
+	)
+
+	s := tail.job.Stats
+	if !s.ETAKnown {
+		t.Fatal("the ETA is written right there on the line")
+	}
+	if want := 24*time.Hour + 51*time.Minute + 48*time.Second; s.ETA != want {
+		t.Errorf("eta = %s, want %s", s.ETA, want)
+	}
+}
+
+// The elapsed time crossing a day is worse than a dropped figure. It fails to
+// parse, stays zero, and the zero then reads as time going backwards -- which
+// is the signal for "a new run has started", so a job that has been going for
+// twenty-four hours silently discards its own errors and statistics.
+func TestADayOfElapsedTimeIsNotANewRun(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:22 ERROR : one.md: Failed to copy: RootURL not set",
+		"2026/08/22 17:45:33 NOTICE: ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Checks:                 0 / 0, -, Listed 1",
+		"Elapsed time:      23h59m0s",
+		"",
+		// One minute later, and over the boundary.
+		"2026/08/23 17:46:33 NOTICE: ",
+		"Transferred:   \t  740.000 MiB / 4.932 GiB, 15%, 12.408 MiB/s, ETA 5m48s",
+		"Checks:                 0 / 0, -, Listed 1",
+		"Elapsed time:      1d0h0m1.1s",
+		"",
+	)
+
+	if want := 24*time.Hour + 1100*time.Millisecond; tail.job.Stats.Elapsed != want {
+		t.Errorf("elapsed = %s, want %s", tail.job.Stats.Elapsed, want)
+	}
+	if len(tail.job.Errors) != 1 {
+		t.Errorf("the run is the same one; its errors were discarded: %+v", tail.job.Errors)
+	}
+}
+
+func TestParseLogDuration(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+		ok   bool
+	}{
+		// The shapes Go already understands, which are most of them.
+		{"47.6s", 47600 * time.Millisecond, true},
+		{"5m14.6s", 5*time.Minute + 14600*time.Millisecond, true},
+		{"22h36m11s", 22*time.Hour + 36*time.Minute + 11*time.Second, true},
+		// And the ones it does not. A component of zero is left out entirely,
+		// which is why the day can be followed straight by the minutes.
+		{"1d51m48s", 24*time.Hour + 51*time.Minute + 48*time.Second, true},
+		{"1d0h0m1.1s", 24*time.Hour + 1100*time.Millisecond, true},
+		{"2w1d", 15 * 24 * time.Hour, true},
+		{"1y", 365 * 24 * time.Hour, true},
+		// "-" is rclone saying it cannot estimate, not an estimate of nothing.
+		{"-", 0, false},
+		{"", 0, false},
+		{"nonsense", 0, false},
+	}
+
+	for _, c := range cases {
+		got, ok := parseLogDuration(c.in)
+		if ok != c.ok || got != c.want {
+			t.Errorf("parseLogDuration(%q) = %s, %v; want %s, %v", c.in, got, ok, c.want, c.ok)
+		}
 	}
 }
 

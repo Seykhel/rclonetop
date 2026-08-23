@@ -91,6 +91,12 @@ type Process struct {
 	// started with --rc-addr. It is how the rc collector finds daemons to
 	// talk to without ever scanning the network.
 	RCAddr string
+
+	// Cwd is the process's working directory, which is what a relative path on
+	// its command line is relative to. Without it "--log-file rclone.log"
+	// cannot be resolved to a file, and resolving it against rclonetop's own
+	// directory would open a different file of the same name.
+	Cwd string
 }
 
 // Uptime reports how long the process has been running. It returns zero when
@@ -247,6 +253,12 @@ type Job struct {
 	// going.
 	Outcome  string
 	Finished bool
+
+	// ReadError says why this log could not be read, and is empty when it
+	// could. A job that stands still because the file is unreadable looks
+	// exactly like one that stands still because nothing is happening, and the
+	// two mean opposite things.
+	ReadError string
 
 	Errors []LogLine
 	Source Source

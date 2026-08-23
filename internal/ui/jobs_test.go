@@ -153,6 +153,24 @@ func TestLogErrorsAppearUnderTheProcess(t *testing.T) {
 	}
 }
 
+// A job whose log cannot be read stands as still as one with nothing to do.
+// Saying which is the same distinction the throughput line already makes when
+// /proc/<pid>/io belongs to someone else.
+func TestAnUnreadableLogSaysSo(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindBisync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile:   "/var/log/rclone.log",
+		PID:       193345,
+		ReadError: "open /var/log/rclone.log: permission denied",
+	}}, now)
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "log unreadable") {
+		t.Errorf("nothing explains the silence:\n%s", got)
+	}
+}
+
 // The whole point of recovering the paths: "home_user_Documents" is what is on
 // disk, but it is not what anyone typed.
 func TestSyncPairPrefersTheRealPaths(t *testing.T) {
