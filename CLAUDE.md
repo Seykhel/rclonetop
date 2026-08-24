@@ -162,14 +162,29 @@ The rules that live there:
   file. Both the old name and a `%` in the value are refused with the explanation. This is also why
   the key was not simply called `clock_format`: btop's names are reused *where the meaning is the
   same*, and a value neither program can read is not the same meaning.
-- **`graph_symbol` empty is a third state**, not a fourth symbol: it means nobody has chosen. Naming
-  a symbol is a statement about the font and `force_tty` one about the terminal, so a named symbol
-  beats `force_tty` — but only within one source; across sources the command line wins outright.
-  `resolveGraphSymbol` in `cmd/rclonetop/flags.go` is the single place that settles it, and it must
-  stay single: the first version asked only "is the symbol empty", which reads correctly until a
-  default configuration file names braille, at which point `--tty` silently stops producing ASCII for
-  everyone who copied one. `main` no longer decides this. The theme has the same shape one step
-  further on — `force_tty` read from the file must not replace a `--theme` named at the prompt.
+- **Naming a thing beats a flag that only implies it, within one source; across sources the command
+  line wins outright.** One rule, settled in two places and nowhere else: `resolveGraphSymbol` and
+  `resolveTTYTheme` in `cmd/rclonetop/flags.go`. `--tty` says "this is a console" and answers the
+  font and the palette by implication; `--graph-symbol` and `--theme` answer them outright, so both
+  survive a `--tty` typed alongside them. Both resolvers run *after* `applyConfig` has settled
+  `o.tty`, and read that rather than `cfg.ForceTTY` — moving either call up would compile and would
+  quietly start ignoring `--tty=false`.
+  - `graph_symbol` empty is a third state, not a fourth symbol: it means nobody has chosen, which is
+    what lets the file distinguish a symbol it named from one it defaulted to. `color_theme` has no
+    such state — it always holds something, and `default` is a theme somebody may have meant — so
+    `force_tty` read from a file still replaces the file's own theme. Only the prompt can be sure.
+  - `--tty=false` is the only way to say "no, this is not a console" when the file says it is, so it
+    has to work. Two attempts did not. The first asked only "is the symbol empty", which reads
+    correctly until a default configuration file names braille, at which point `--tty` silently stops
+    producing ASCII for everyone who copied one. The second asked `o.explicit[flagTTY]` alone, which
+    reads correctly until somebody types `--tty=false` — a flag that was typed, and is off. **A
+    boolean flag has three states and `flag.Visit` distinguishes two of them**: any rule weighing two
+    options has to ask both whether it was typed and what it says.
+- **The `explicit` map is keyed by constants** (`flagTTY`, `flagTheme`, …) and is not read outside
+  `flags.go`. A typo in one of those strings compiles, passes every test that happens not to cover
+  that option, and switches off its precedence rule — the file just starts winning against a typed
+  flag, which is the one thing the mechanism exists to prevent.
+  `TestExplicitKeysAreRealFlagNames` types every one of them.
 - `defaultFile` is prose written by hand — it is the only documentation of the format that ships with
   the binary — so it can drift from the defaults it claims to show. `TestDefaultFileRoundTrips` is
   the only thing that stops it: it parses the text and requires the result to equal `Defaults()`.

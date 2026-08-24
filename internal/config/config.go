@@ -13,8 +13,10 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -113,7 +115,7 @@ func Load(path string) (Config, error) {
 	}
 	for _, p := range SearchPaths() {
 		cfg, err := loadFile(p)
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		return cfg, err

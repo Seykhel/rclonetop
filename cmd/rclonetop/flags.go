@@ -40,12 +40,37 @@ type options struct {
 	// configuration file is the only way to set it.
 	clockLayout string
 
+	// ttyTheme is the answer to "should the eight-colour built-in theme replace
+	// whatever was named", which --tty and --theme can both speak to. Settled
+	// by applyConfig for the same reason graphSymbol is: that is the last place
+	// it is still known who asked for what.
+	ttyTheme bool
+
 	// explicit names the long form of every flag the user actually typed. It is
 	// what applyConfig consults to decide whether a value came from the command
 	// line or is merely the built-in default waiting to be overridden by the
 	// configuration file.
+	//
+	// It answers "was this typed", which for a boolean is not the same question
+	// as "is this on": --tty=false is typed and off. Anything settling a rule
+	// between two options has to ask both.
 	explicit map[string]bool
 }
+
+// The long forms the explicit map is keyed by. They are constants because a
+// typo in one of these strings compiles, passes every test that happens not to
+// cover that option, and silently switches off the precedence rule for it --
+// the configuration file would just start winning against a typed flag, which
+// is the one thing this whole mechanism exists to prevent.
+const (
+	flagTheme           = "theme"
+	flagGraphSymbol     = "graph-symbol"
+	flagUpdate          = "update"
+	flagThemeBackground = "theme-background"
+	flagBase10          = "base-10"
+	flagTTY             = "tty"
+	flagLowColor        = "low-color"
+)
 
 func parseFlags(args []string) (options, error) {
 	var o options
@@ -84,13 +109,13 @@ func parseFlags(args []string) (options, error) {
 		register(names, func(n string) { fs.BoolVar(target, n, def, "") })
 	}
 
-	str(&o.themeName, d.ColorTheme, "theme")
-	str(&o.graphSymbol, d.GraphSymbol, "graph-symbol")
-	num(&o.updateMS, d.UpdateMS, "u", "update")
-	boolean(&o.themeBackground, d.ThemeBackground, "theme-background")
-	boolean(&o.base10, d.Base10Sizes, "base-10")
-	boolean(&o.tty, d.ForceTTY, "t", "tty")
-	boolean(&o.lowColor, !d.TrueColor, "l", "low-color")
+	str(&o.themeName, d.ColorTheme, flagTheme)
+	str(&o.graphSymbol, d.GraphSymbol, flagGraphSymbol)
+	num(&o.updateMS, d.UpdateMS, "u", flagUpdate)
+	boolean(&o.themeBackground, d.ThemeBackground, flagThemeBackground)
+	boolean(&o.base10, d.Base10Sizes, flagBase10)
+	boolean(&o.tty, d.ForceTTY, "t", flagTTY)
+	boolean(&o.lowColor, !d.TrueColor, "l", flagLowColor)
 	boolean(&o.debug, false, "d", "debug")
 	boolean(&o.noAltScreen, false, "no-alt-screen")
 	str(&o.configPath, "", "c", "config")
@@ -139,28 +164,34 @@ func parseFlags(args []string) (options, error) {
 // differ on purpose: a value from a later version's vocabulary is passed
 // through by the file and refused at the prompt.
 func applyConfig(o options, cfg config.Config) options {
-	if !o.explicit["theme"] {
+	if !o.explicit[flagTheme] {
 		o.themeName = cfg.ColorTheme
 	}
-	if !o.explicit["update"] {
+	if !o.explicit[flagUpdate] {
 		o.updateMS = cfg.UpdateMS
 	}
-	if !o.explicit["theme-background"] {
+	if !o.explicit[flagThemeBackground] {
 		o.themeBackground = cfg.ThemeBackground
 	}
-	if !o.explicit["base-10"] {
+	if !o.explicit[flagBase10] {
 		o.base10 = cfg.Base10Sizes
 	}
-	if !o.explicit["tty"] {
+	if !o.explicit[flagTTY] {
 		o.tty = cfg.ForceTTY
 	}
-	if !o.explicit["low-color"] {
+	if !o.explicit[flagLowColor] {
 		// btop states this one from the other side, and the key keeps btop's
 		// polarity so that a btop.conf reads the same here.
 		o.lowColor = !cfg.TrueColor
 	}
 	o.clockLayout = cfg.ClockLayout
+
+	// Both of these read o.tty, so they have to run after it has been settled
+	// just above -- they want the resolved answer to "is this a console", not
+	// the file's opinion of it. Moving either call up would compile and would
+	// quietly start ignoring --tty=false.
 	o.graphSymbol = resolveGraphSymbol(o, cfg)
+	o.ttyTheme = resolveTTYTheme(o)
 	return o
 }
 
@@ -173,25 +204,48 @@ func applyConfig(o options, cfg config.Config) options {
 // sources the ordinary rule holds and the command line wins outright, because a
 // flag typed now is a decision made now and the file's was made months ago.
 //
-// Getting this wrong is not visible in a test of either half alone: it was
+// Getting this wrong is not visible in a test of either half alone. It was
 // written first as "use ASCII when nothing has been named", which reads
 // correctly until a default configuration file names braille, at which point
-// --tty silently stops producing ASCII for everyone who copied one.
+// --tty silently stops producing ASCII for everyone who copied one. The second
+// attempt asked o.explicit[flagTTY] on its own, which reads correctly until
+// somebody types --tty=false -- a flag that was typed, and is off. Hence both
+// halves of the second case, and o.tty rather than cfg.ForceTTY in the fourth:
+// the file's opinion has already lost to the prompt by then, and asking it
+// again would let it win after all.
 func resolveGraphSymbol(o options, cfg config.Config) string {
 	switch {
-	case o.explicit["graph-symbol"]:
+	case o.explicit[flagGraphSymbol]:
 		return o.graphSymbol
-	case o.explicit["tty"]:
+	case o.explicit[flagTTY] && o.tty:
 		return string(graph.TTY)
 	case cfg.GraphSymbol != "":
 		return cfg.GraphSymbol
-	case cfg.ForceTTY:
+	case o.tty:
 		return string(graph.TTY)
 	default:
 		// Empty, still: the UI's own default is braille, and saying so here
 		// would be a third place for that fact to live.
 		return ""
 	}
+}
+
+// resolveTTYTheme decides whether TTY mode replaces the theme that was named.
+//
+// The same rule as the graph symbol, one step on: naming a thing beats a flag
+// that only implies it. --tty says "this is a console", which answers the theme
+// question by implication; --theme answers it outright. So a theme named at the
+// prompt survives --tty, and only the colour depth and the glyphs are forced.
+//
+// The parallel is not exact on the file's side, and the reason is worth knowing
+// before anyone tries to make it exact: graph_symbol has a third state that
+// says "unchosen", so the file can distinguish a symbol it named from one it
+// merely defaulted to. color_theme has no such state -- it always holds
+// something, and "default" is a theme somebody may have chosen on purpose. The
+// file therefore cannot say whether it meant its theme, so force_tty read from
+// a file still replaces it. Only the prompt can be sure.
+func resolveTTYTheme(o options) bool {
+	return o.tty && !o.explicit[flagTheme]
 }
 
 func printUsage(w io.Writer) {

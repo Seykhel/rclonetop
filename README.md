@@ -154,7 +154,7 @@ rclonetop [options]
 | `--theme-background` | use the theme's background colour (default true) |
 | `-u`, `--update <ms>` | refresh interval in milliseconds (default 2000) |
 | `--base-10` | size units in KB=1000 instead of KiB=1024 |
-| `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs unless `--graph-symbol` says otherwise |
+| `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs — but a `--theme` or `--graph-symbol` named alongside it still wins |
 | `-l`, `--low-color` | limit output to 256 colours |
 | `--no-alt-screen` | draw in place instead of on the alternate screen |
 | `-c`, `--config <file>` | read this configuration file instead of searching |
@@ -223,10 +223,19 @@ Two keys need a word of warning:
   from `btop.conf` is common enough that it, and the old key name, are both
   refused with the explanation rather than printed literally in the header.
 - `graph_symbol` left empty is a third state rather than a fourth symbol: it
-  means nobody has chosen. Naming a symbol says something about the font, and
-  `force_tty` says something about the terminal, so a named symbol wins over
-  `force_tty` — but only within one source. A `--tty` typed at the prompt still
-  beats a symbol named in the file, like every other flag does.
+  means nobody has chosen. That matters because of how `force_tty` interacts
+  with it, which is one rule: **naming a thing beats a flag that only implies
+  it, within one source** — `force_tty` says something about the terminal and
+  answers the font question by implication, while `graph_symbol` answers it
+  outright — **and across sources the command line wins outright**, so a `--tty`
+  typed at the prompt beats a symbol named in the file, like every other flag.
+  `--theme` and `--tty` work the same way, with one difference worth knowing:
+  `color_theme` has no "unchosen" state, so `force_tty` in a file still replaces
+  that same file's theme. Only a `--theme` typed at the prompt survives it.
+
+Because `force_tty` can be set in the file, there has to be a way to contradict
+it at the prompt, and that is `--tty=false` — Go's flag syntax, and the reason
+these rules ask both whether a flag was typed *and* what it was set to.
 
 ## Themes
 
