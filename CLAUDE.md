@@ -125,29 +125,40 @@ channel — `waitFor` re-arms itself after each one. There is a single view, `re
 It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
 something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here.
 
-**A ramp is indexed raw only for area; text is blended towards it.** This is the one rule of the
-colour vocabulary and it is easy to break by accident:
+**A ramp may be indexed at a point somebody chose; it must never be indexed by a measurement.** This
+is the one rule of the colour vocabulary. It was first written as "raw for area, blended for text",
+which is the wrong cut and cost a round of review: it washed out fixed accents that were already
+legible. The line is **measured versus chosen**, because only a measurement reaches zero, and the
+zero end of a btop ramp is unreadable.
 
-- `Model.gradientStyle(ramp, frac)` indexes the ramp directly and is for **filled cells** — the
-  sparkline, and meters when they exist. btop's ramps begin dark on purpose (`download_start` is
-  `#291f75`, `used_start` is `#592b26`) because a dark *cell* against a dark background reads as "not
-  much", which is true.
-- `Model.magnitudeStyle(ramp, frac)` is for **letters**, and blends from `main_fg` towards the ramp
-  by `frac` rather than indexing it. A dark glyph reads as nothing at all: an idle mount sits at
-  `frac` 0 for hours, and indexing wrote `↓ 0 B/s` in near-black violet. At 0 the text is plain
-  `main_fg`; at 1 it is the ramp's own hot end, so nothing is lost at the top.
-  `TestTextStaysLegibleAcrossTheWholeRamp` holds every ramp above half of `main_fg`'s luminance over
-  the low end, and `TestTheRawRampReallyIsTooDarkForText` pins the premise so the cure cannot be
-  "simplified" back into the disease.
-- `Model.label()` and `Model.value()` are the pair for a named figure. `inactive_fg` is `#40` and
-  means *switched off*; it used to label `pid`, `up`, `rss`, `thr`, `rd` and `wr`, which made most of
-  the screen invisible and left nothing to say "switched off" with. Labels are `main_fg`, values are
-  bold, and the hierarchy is carried by weight — which survives an eight-colour console, where one
-  made of colour would not. `inactive_fg` is now only for what is genuinely inert or stale:
-  "collecting…", "throughput unavailable", "idle", a staleness note.
+- `Model.magnitudeStyle(ramp, frac)` — `frac` is a **measurement**: a rate over the observed peak,
+  RSS over 1 GiB, a job's completion, how stale a run is. It blends from `main_fg` *towards* the ramp
+  rather than indexing it, because an idle mount sits at `frac` 0 for hours and indexing wrote
+  `↓ 0 B/s` in near-black violet. At 0 the text is plain `main_fg`; at 1 it is the ramp's own hot
+  end, so nothing is lost at the top.
+- `Model.accentStyle(a)` — `a` is a **chosen** point, declared in `textAccents`: "cache figures are
+  cyan". Indexed raw, because blending only dilutes a colour somebody already picked for being
+  legible. An accent not listed in `textAccents` escapes the legibility test, which is the one way to
+  get an unreadable one past the suite.
+- `Model.gradientStyle(ramp, frac)` — raw, and reached for directly only to fill **area**: the
+  sparkline, and meters when they exist. A dark *cell* against a dark background honestly reads as
+  "not much"; a dark glyph reads as nothing at all.
 
-Only `sparkline` still calls `gradientStyle`. A second raw call on something made of letters is the
-regression.
+Three tests hold it, and the third is the one that matters. `TestTextStaysLegibleAcrossTheWholeRamp`
+and `TestFixedAccentsAreLegible` hold both text paths above half of `main_fg`'s luminance;
+`TestTheRawRampReallyIsTooDarkForText` pins the *premise*, so the cure cannot be "simplified" back
+into the disease with everything else still green. Luminance is Rec. 709 and is a poor proxy for a
+saturated primary — it scores `#ff0000` at 54 — which is why the accent test runs against the
+built-in theme only and the `tty` one is exempt.
+
+**Three levels of emphasis, and each boundary was a mistake on one side of it.** `Model.label()` is
+halfway between `main_fg` and `inactive_fg`; `Model.value()` is `main_fg` and **not bold**; bold
+rides with colour, belonging to `magnitudeStyle` and `accentStyle` alone. Labels were `inactive_fg`
+(`#40`, the colour that means *switched off*), which made most of the screen invisible and left
+nothing to say "switched off" with. Made `main_fg` instead, they were indistinguishable from the
+figures they name. And bolding every value made the screen uniformly bright and flat — emphasising
+everything emphasises nothing. `inactive_fg` is now only for what is genuinely inert or stale:
+"collecting…", "throughput unavailable", "idle", a staleness note.
 
 **Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
 data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),

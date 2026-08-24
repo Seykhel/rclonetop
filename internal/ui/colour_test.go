@@ -107,23 +107,54 @@ func TestMagnitudeClampsFractionsOutsideTheUnitInterval(t *testing.T) {
 	}
 }
 
-func TestInactiveIsReservedForWhatIsInert(t *testing.T) {
-	// inactive_fg is #40 in the built-in theme -- dark grey, chosen to mean
-	// "switched off". It used to label pid, up, rss, thr, rd and wr, which made
-	// two thirds of the screen nearly invisible and left nothing to say
-	// "switched off" with. Labels are main_fg now, and the hierarchy between a
-	// label and its value is carried by weight, which survives a terminal with
-	// eight colours where a distinction made of colour would not.
+func TestFixedAccentsAreLegible(t *testing.T) {
+	// The other half of the rule. A point somebody chose is indexed rather than
+	// blended, because blending only dilutes a colour already picked for being
+	// legible -- that is what turned the cache figures from saturated cyan into
+	// a pale wash. Nothing then guarantees the chosen point is a good one, so it
+	// is guaranteed here instead.
+	//
+	// The built-in theme only. The eight-colour theme's ramps are saturated
+	// primaries, and Rec. 709 scores #ff0000 at 54 while a console renders it at
+	// full intensity and perfectly readable: luminance is a poor proxy for a pure
+	// hue, and there is no blend towards the foreground to rescue one here.
+	th := theme.Default()
+	m := New(nil, Options{Theme: th}, nil)
+	floor := luminance(th.Color("main_fg")) / 2
+
+	for _, a := range textAccents {
+		if got := luminance(m.accentColor(a)); got < floor {
+			t.Errorf("the %s ramp at %.2f has luminance %.0f, below the floor of %.0f: "+
+				"pick a brighter point on it, or blend it instead",
+				a.ramp, a.at, got, floor)
+		}
+	}
+}
+
+func TestALabelIsDimmerThanItsValueAndBrighterThanInert(t *testing.T) {
+	// Three levels, and each boundary was a mistake on one side of it. Labels
+	// were inactive_fg -- #40, the colour that means "switched off" -- which made
+	// most of the screen invisible and left nothing to say "switched off" with.
+	// Made main_fg instead, they became indistinguishable from the figures they
+	// name. Halfway is legible and plainly secondary, which is all a label is.
 	th := theme.Default()
 	m := New(nil, Options{Theme: th}, nil)
 
-	if luminance(th.Color("inactive_fg")) >= luminance(th.Color("main_fg"))/2 {
-		t.Skip("this theme's inactive_fg is not dark enough for the rule to matter")
+	inert := luminance(th.Color("inactive_fg"))
+	label := luminance(m.labelColor())
+	value := luminance(th.Color("main_fg"))
+
+	if !(inert < label && label < value) {
+		t.Errorf("luminance should climb inert < label < value, got %.0f, %.0f, %.0f",
+			inert, label, value)
 	}
-	if got, want := m.label().GetForeground(), th.Color("main_fg").Lipgloss(); got != want {
-		t.Errorf("label foreground = %v, want main_fg %v", got, want)
+	if label < value/2 {
+		t.Errorf("a label at %.0f is below half the body text at %.0f, which is where the last one was unreadable",
+			label, value)
 	}
-	if !m.value().GetBold() {
-		t.Error("a value is not bold, so nothing distinguishes it from its own label")
+	// Bold rides with colour and only with colour: emphasising every figure
+	// emphasises none of them, which is what the first attempt did.
+	if m.value().GetBold() {
+		t.Error("a plain value is bold; bold belongs to the styles that carry a magnitude")
 	}
 }

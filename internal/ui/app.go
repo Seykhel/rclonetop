@@ -200,11 +200,13 @@ func (m Model) style(key string) lipgloss.Style {
 // gradientStyle grades a value along a named ramp. frac is clamped by the
 // theme, so callers can pass a raw ratio.
 //
-// This is the *area* colour, and only area may use it: a filled graph cell or a
-// meter segment. btop's ramps begin dark on purpose -- download_start is
-// #291f75 and used_start is #592b26 -- because a dark filled cell reads as "not
-// much" against the background. A dark *glyph* reads as nothing at all.
-// Anything that draws letters wants magnitudeStyle instead.
+// Callers do not reach for this directly except to fill area -- a graph cell or
+// a meter segment. Text goes through magnitudeStyle when the fraction is
+// measured and accentStyle when it was chosen, and the difference between those
+// two is where the bug lived: btop's ramps begin dark on purpose
+// (download_start is #291f75) because a dark filled cell reads as "not much"
+// against the background, which is true, while a dark glyph reads as nothing at
+// all.
 func (m Model) gradientStyle(ramp string, frac float64) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(m.opts.Theme.Gradient(ramp, frac).Lipgloss())
 }
@@ -251,23 +253,83 @@ func (m Model) magnitudeColor(ramp string, frac float64) theme.Color {
 		frac)
 }
 
-// label is the styling for the words that name a value -- "pid", "up", "rss".
+// labelDim is how far a label is faded from the body text towards inactive_fg.
 //
-// They were inactive_fg, which is #40 in the built-in theme: dark grey chosen to
-// mean "this is switched off". Using it for ordinary labels made two thirds of
-// the screen nearly invisible and left nothing to say "switched off" with.
-// inactive_fg is now reserved for what is genuinely inert or stale, and the
-// hierarchy between a label and its value is carried by weight instead --
-// labels plain, values bold. That distinction survives on a terminal with eight
-// colours, which a distinction made of colour would not.
+// Halfway, and both ends of that are deliberate. inactive_fg on its own is #40
+// in the built-in theme -- dark grey, chosen to mean "switched off" -- and using
+// it for the words that name a value made two thirds of the screen nearly
+// invisible while leaving nothing to say "switched off" with. main_fg on its own
+// is the other failure: a label indistinguishable from the figure beside it.
+// Halfway is legible and plainly secondary, which is all a label has to be.
+const labelDim = 0.5
+
+// label is the styling for the words that name a value -- "pid", "up", "rss".
 func (m Model) label() lipgloss.Style {
-	return m.style("main_fg")
+	return lipgloss.NewStyle().Foreground(m.labelColor().Lipgloss())
+}
+
+// labelColor is label's arithmetic on its own, so the three-way ordering it has
+// to sit in the middle of can be asserted on colours.
+func (m Model) labelColor() theme.Color {
+	return theme.Blend(
+		m.opts.Theme.Color("main_fg"),
+		m.opts.Theme.Color("inactive_fg"),
+		labelDim)
 }
 
 // value is the styling for a figure that carries no magnitude of its own -- a
-// PID, a thread count, a duration.
+// PID, a thread count, a cumulative byte counter.
+//
+// Not bold. Bold rides with colour in this view: it belongs to magnitudeStyle
+// and accentStyle, the two that mean "this number has a size worth noticing".
+// Emphasising every figure emphasises none of them, and the first attempt at
+// this made the whole screen bold and flat.
 func (m Model) value() lipgloss.Style {
-	return m.style("main_fg").Bold(true)
+	return m.style("main_fg")
+}
+
+// accent is a fixed point on a ramp, chosen to colour text.
+//
+// The distinction from magnitudeStyle is the one that matters, and it is not
+// "text versus area" as first written. It is **measured versus chosen**. A
+// measurement reaches zero -- an idle mount reports exactly that for hours --
+// and the zero end of a btop ramp is unreadable, so a measurement has to be
+// blended. A fixed point is a colour decision somebody made and looked at
+// ("cache figures are cyan"), and blending it only dilutes it: doing so turned
+// the cache sizes from saturated cyan into a pale wash for no gain.
+type accent struct {
+	ramp string
+	at   float64
+}
+
+var (
+	accentCacheSize = accent{"cached", 0.6}
+	// Well past the middle of a ramp that is dark for most of its length: the
+	// same figure at 0.35 came out a muddy maroon, which was the one fixed point
+	// that genuinely needed moving rather than blending.
+	accentSyncSize = accent{"used", 0.8}
+	accentActive   = accent{"free", 0.4}
+	accentRunning  = accent{"free", 1}
+	accentBusy     = accent{"cpu", 0.5}
+	accentFailed   = accent{"temp", 1}
+)
+
+// textAccents is what the legibility test walks. An accent added without being
+// listed here is the one way an unreadable one gets past the suite.
+var textAccents = []accent{
+	accentCacheSize, accentSyncSize, accentActive,
+	accentRunning, accentBusy, accentFailed,
+}
+
+// accentStyle colours text at a fixed, chosen point on a ramp.
+func (m Model) accentStyle(a accent) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(m.accentColor(a).Lipgloss())
+}
+
+// accentColor is accentStyle's arithmetic on its own, so every chosen point can
+// be held to the same legibility floor the blend guarantees for a measurement.
+func (m Model) accentColor(a accent) theme.Color {
+	return m.opts.Theme.Gradient(a.ramp, a.at)
 }
 
 // defaultWidth is what the dense view assumes before the terminal has reported

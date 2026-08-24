@@ -274,14 +274,20 @@ transfer throughput, and `process` colours the files in flight. Two built-in
 themes need no files: `default`, which reproduces btop's, and `tty` for
 eight-colour consoles.
 
-The ramps are used the way btop uses them, which is not the way it looks. btop's
-ramps start dark on purpose — `download_start` is `#291f75` — because it only
-ever paints those ends as *filled cells*, where a dark cell against a dark
-background honestly reads as "not much". Colouring **letters** that way instead
-makes an idle mount write `↓ 0 B/s` in near-black violet, which is a measurement
-nobody can read. So area is graded along the ramp and text is blended from the
-foreground colour *towards* it: legible at zero, the ramp's own hot end at full
-scale, and graded in between.
+The ramps are used the way btop uses them, which is not quite the way it looks.
+btop's ramps start dark on purpose — `download_start` is `#291f75` — because it
+only ever paints those ends as *filled cells*, where a dark cell against a dark
+background honestly reads as "not much".
+
+The distinction that matters is between a fraction that was **measured** and one
+that was **chosen**, because only a measurement reaches zero. A figure graded by
+a measurement — a rate against the fastest yet seen, memory, how stale a run is —
+is blended from the foreground colour *towards* the ramp rather than indexed
+into it: legible at zero, the ramp's own hot end at full scale, graded in
+between. Indexing it instead makes an idle mount write `↓ 0 B/s` in near-black
+violet, and an idle mount is what a backup monitor shows most of the day. A
+fixed point somebody picked, on the other hand, is used as it is — blending a
+colour already chosen for being legible only dilutes it.
 
 ## Reporting a problem
 
