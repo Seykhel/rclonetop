@@ -228,6 +228,25 @@ func TestGraphSymbolPrecedence(t *testing.T) {
 			cfg:  func(c config.Config) config.Config { c.ForceTTY = true; return c },
 			want: "braille",
 		},
+		{
+			// A boolean flag has three states, exactly as graph_symbol does:
+			// not typed, typed true, typed false. flag.Visit reports only two
+			// of them, so asking whether --tty was typed is not the same
+			// question as asking whether TTY mode is on, and a rule that
+			// confuses them turns --tty=false into --tty.
+			name: "--tty=false leaves a symbol named in the file alone",
+			args: []string{"--tty=false"},
+			cfg:  func(c config.Config) config.Config { c.GraphSymbol = "block"; return c },
+			want: "block",
+		},
+		{
+			// The only way to say "no, this is not a console" at the prompt
+			// when the file insists that it is -- so it had better work.
+			name: "--tty=false overrules force_tty in the file",
+			args: []string{"--tty=false"},
+			cfg:  func(c config.Config) config.Config { c.ForceTTY = true; return c },
+			want: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -262,6 +281,98 @@ func TestApplyConfigDoesNotOverrideATypedFlag(t *testing.T) {
 	}
 	if o.themeName != "gruvbox_dark" {
 		t.Errorf("themeName = %q: the file overruled a value typed on the command line", o.themeName)
+	}
+}
+
+func TestExplicitKeysAreRealFlagNames(t *testing.T) {
+	// A typo in one of these constants compiles, and switches off the
+	// precedence rule for that option rather than failing: the configuration
+	// file would simply start winning against a flag the user typed. Typing
+	// every one of them and requiring it to be recorded is what catches a flag
+	// renamed without its constant.
+	keys := []string{
+		flagTheme, flagGraphSymbol, flagUpdate,
+		flagThemeBackground, flagBase10, flagTTY, flagLowColor,
+	}
+	args := []string{
+		"--theme=dracula", "--graph-symbol=block", "--update=500",
+		"--theme-background=false", "--base-10=true", "--tty=true", "--low-color=true",
+	}
+	if len(args) != len(keys) {
+		t.Fatalf("%d flags typed for %d keys: they are meant to be the same list", len(args), len(keys))
+	}
+
+	o, err := parseFlags(args)
+	if err != nil {
+		t.Fatalf("parseFlags(%v): %v", args, err)
+	}
+	for _, k := range keys {
+		if !o.explicit[k] {
+			t.Errorf("%q is not the canonical name of any registered flag", k)
+		}
+	}
+}
+
+func TestTTYThemePrecedence(t *testing.T) {
+	// The same rule as the graph symbol: naming a thing beats a flag that only
+	// implies it. --tty says "this is a console", which answers the theme
+	// question by implication; --theme answers it outright.
+	tests := []struct {
+		name string
+		args []string
+		cfg  func(config.Config) config.Config
+		want bool
+	}{
+		{
+			name: "nobody has said anything",
+			cfg:  func(c config.Config) config.Config { return c },
+			want: false,
+		},
+		{
+			name: "--tty alone replaces the theme",
+			args: []string{"-t"},
+			cfg:  func(c config.Config) config.Config { return c },
+			want: true,
+		},
+		{
+			name: "a theme named at the prompt survives --tty",
+			args: []string{"-t", "--theme", "dracula"},
+			cfg:  func(c config.Config) config.Config { return c },
+			want: false,
+		},
+		{
+			name: "a theme named at the prompt survives force_tty in the file",
+			args: []string{"--theme", "dracula"},
+			cfg:  func(c config.Config) config.Config { c.ForceTTY = true; return c },
+			want: false,
+		},
+		{
+			// Not the exact parallel of the graph symbol, and deliberately so:
+			// color_theme has no "unchosen" state, so the file cannot say
+			// whether it meant its theme or merely holds the default.
+			name: "force_tty in the file still replaces the file's own theme",
+			args: nil,
+			cfg:  func(c config.Config) config.Config { c.ForceTTY = true; c.ColorTheme = "dracula"; return c },
+			want: true,
+		},
+		{
+			name: "--tty=false replaces nothing",
+			args: []string{"--tty=false"},
+			cfg:  func(c config.Config) config.Config { c.ForceTTY = true; return c },
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, err := parseFlags(tt.args)
+			if err != nil {
+				t.Fatalf("parseFlags(%v): %v", tt.args, err)
+			}
+			o = applyConfig(o, tt.cfg(config.Defaults()))
+			if o.ttyTheme != tt.want {
+				t.Errorf("ttyTheme = %v, want %v", o.ttyTheme, tt.want)
+			}
+		})
 	}
 }
 

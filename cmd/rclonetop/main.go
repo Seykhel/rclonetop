@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +29,31 @@ func main() {
 		fmt.Fprintln(os.Stderr, "rclonetop:", err)
 		os.Exit(1)
 	}
+}
+
+// configFor loads the configuration these options select, and decides what a
+// file that will not parse costs.
+//
+// -d is the exception, and deliberately so: it is what users are asked to paste
+// into a bug report, and a host whose configuration file will not parse is
+// exactly the sort that gets reported. Making the diagnostic depend on the
+// thing being diagnosed would take it away when it is most needed, so it warns
+// and carries on with the defaults. Everywhere else a file the user wrote wrong
+// is worth stopping for, since they cannot read the complaint once the
+// alternate screen is up.
+//
+// warn is a parameter rather than os.Stderr reached for directly, which is what
+// lets both halves of that decision be tested.
+func configFor(o options, warn io.Writer) (config.Config, error) {
+	cfg, err := config.Load(o.configPath)
+	if err == nil {
+		return cfg, nil
+	}
+	if !o.debug {
+		return config.Defaults(), err
+	}
+	fmt.Fprintln(warn, "rclonetop:", err, "- using the built-in defaults")
+	return config.Defaults(), nil
 }
 
 func run() error {
@@ -51,23 +77,12 @@ func run() error {
 		return nil
 	}
 
+	cfg, err := configFor(flags, os.Stderr)
+	if err != nil {
+		return err
+	}
 	// The file is laid underneath the command line rather than over it, so that
 	// a flag typed now always beats a setting saved months ago.
-	cfg, err := config.Load(flags.configPath)
-	if err != nil {
-		// -d is the exception, and deliberately so: it is what users are asked
-		// to paste into a bug report, and a host whose configuration file will
-		// not parse is exactly the sort that gets reported. Making the
-		// diagnostic depend on the thing being diagnosed would take it away
-		// when it is most needed. Everywhere else a file the user wrote wrong
-		// is worth stopping for, since they cannot see the message once the
-		// alternate screen is up.
-		if !flags.debug {
-			return err
-		}
-		fmt.Fprintln(os.Stderr, "rclonetop:", err, "- using the built-in defaults")
-		cfg = config.Defaults()
-	}
 	flags = applyConfig(flags, cfg)
 
 	th, err := theme.Load(flags.themeName)
@@ -87,10 +102,10 @@ func run() error {
 	case flags.tty:
 		lipgloss.SetColorProfile(termenv.ANSI)
 		// A real console has neither the colours nor the glyphs, so forcing TTY
-		// mode replaces the theme as well -- unless the theme was named on the
-		// command line and force_tty only came from the file, which would be
-		// the file overruling a decision made just now.
-		if flags.explicit["tty"] || !flags.explicit["theme"] {
+		// mode replaces the theme as well -- but whether it does here was
+		// settled by applyConfig, which is the only place that still knows
+		// whether the theme was named or merely defaulted to.
+		if flags.ttyTheme {
 			th = theme.TTY()
 		}
 	case flags.lowColor:
