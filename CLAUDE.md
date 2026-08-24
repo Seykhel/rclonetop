@@ -30,7 +30,10 @@ older than `errorRetention`; anything asserting that an error is *kept* builds i
 
 `-d` runs every collector twice, 500 ms apart, prints what each one saw and exits. It is the fastest
 way to inspect collector output without a TTY, and it is what users are asked to paste in bug
-reports.
+reports. Because of that it is the one caller that survives a configuration file it cannot parse:
+`main` warns on stderr and carries on with the defaults rather than returning the error, since a host
+whose conf is broken is exactly the sort that gets reported and the diagnostic must not depend on the
+thing being diagnosed.
 
 `internal/ui.Version` holds the version string; there is no release tooling or CI in the tree yet
 (`.github/workflows/` is empty). `/bin` and `/dist` are gitignored.
@@ -107,6 +110,47 @@ anything. The systemd collector keeps only the cache of the answers, and `Logs` 
 `LogFileFromArgs` on the vector it takes from `/proc`. `home` is what `$HOME` stands for and must be
 empty when there is no honest answer — a system unit's home is root's, or whatever `User=` says.
 
+**Configuration** (`internal/config`) parses btop's `key = value` format into a comparable `Config`.
+It is read at startup by `cmd/rclonetop` and never afterwards, and it is never written: btop rewrites
+its own configuration on exit, which rclonetop cannot do and stay read-only, so `--default-config`
+prints the commented file btop would have written and the user's shell decides where it lands.
+
+The rules that live there:
+
+- **Precedence is decided by what was typed, not by what the value is.** `parseFlags` records the
+  long form of every flag `flag.Visit` reports, and `applyConfig` lays the file under the command
+  line by consulting that map. Comparing against the defaults instead would let the file overrule
+  `--update 2000`, which is a user choosing the same number the default happens to be. For the same
+  reason every flag with a key is registered with `config.Defaults()`'s value rather than a literal:
+  a flag's default *is* what the file would have supplied, and one spelling cannot drift from two.
+- **The file is forgiving where the prompt is strict**, and the split is between kinds of wrongness,
+  not between sources. An unknown *key* is skipped, because a file written for a later version names
+  boxes and presets this build has never heard of and refusing to start would break every downgrade;
+  likewise an unknown `graph_symbol`, since the plotter falls back to braille. A known key with a
+  value that cannot mean anything — a number that is not a number, an `update_ms` below the floor —
+  is an error naming the file and the line. Skipping is not free and the cost is real: a misspelled
+  key is skipped as silently as a future one, so `vim_keys = True` in a file does nothing and says
+  nothing. That is the trade accepted, not a claim that the file warns.
+- **`clock_format` is the one unknown key that is refused**, because it is the one that never will be
+  a later version's: it is btop's name for a value rclonetop cannot take. rclonetop spells it
+  `clock_layout` and means a Go reference layout, not a strftime string — `time.Format` would render
+  `%X` literally and a header reading `%X` looks like a bug in rclonetop rather than a mistake in the
+  file. Both the old name and a `%` in the value are refused with the explanation. This is also why
+  the key was not simply called `clock_format`: btop's names are reused *where the meaning is the
+  same*, and a value neither program can read is not the same meaning.
+- **`graph_symbol` empty is a third state**, not a fourth symbol: it means nobody has chosen. Naming
+  a symbol is a statement about the font and `force_tty` one about the terminal, so a named symbol
+  beats `force_tty` — but only within one source; across sources the command line wins outright.
+  `resolveGraphSymbol` in `cmd/rclonetop/flags.go` is the single place that settles it, and it must
+  stay single: the first version asked only "is the symbol empty", which reads correctly until a
+  default configuration file names braille, at which point `--tty` silently stops producing ASCII for
+  everyone who copied one. `main` no longer decides this. The theme has the same shape one step
+  further on — `force_tty` read from the file must not replace a `--theme` named at the prompt.
+- `defaultFile` is prose written by hand — it is the only documentation of the format that ships with
+  the binary — so it can drift from the defaults it claims to show. `TestDefaultFileRoundTrips` is
+  the only thing that stops it: it parses the text and requires the result to equal `Defaults()`.
+  That is also why `Config` has no slices or maps.
+
 ### Things that will bite
 
 - **Rates need two samples.** `/proc/<pid>/io` counters are cumulative and must never be rendered as
@@ -160,9 +204,13 @@ Any new collector should follow the same shape: a real constructor plus an `...A
   the descriptor, and only for units systemd already lists. A script is read, never run: command
   substitution, `${VAR:-default}` and an unassigned variable all mean "no answer", because working
   out what those produce means executing it.
-- **No flag that does nothing.** btop's `-c`, `-p` and `--vim-keys` are intentionally unregistered
-  until the config file and box presets exist; accepting and ignoring a flag is worse than rejecting
-  it. Short flags mirror btop's meaning where it applies.
+- **No flag that does nothing.** btop's `-p` and `--vim-keys` are intentionally unregistered until
+  the box presets exist and there is something on screen to move between; accepting and ignoring a
+  flag is worse than rejecting it. Short flags mirror btop's meaning where it applies. The same rule
+  binds `internal/config`: `shown_boxes`, `presets` and `vim_keys` get no `Config` field to be parsed
+  into and shelved. A key read into a field that nothing consumes is the same lie as a flag, and
+  harder to notice in a file than at a prompt. (Unrecognised keys are still skipped in silence, for
+  the forward-compatibility reason below — that is a cost of the design, not a warning system.)
 - **No new dependencies without a real reason.** Graphing and theme parsing are hand-written
   precisely because the requirement is narrower than any library's.
 - Comments in this codebase explain *why*, at length, especially where the obvious implementation is
