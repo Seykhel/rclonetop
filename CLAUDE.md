@@ -35,8 +35,32 @@ reports. Because of that it is the one caller that survives a configuration file
 whose conf is broken is exactly the sort that gets reported and the diagnostic must not depend on the
 thing being diagnosed.
 
-`internal/ui.Version` holds the version string; there is no release tooling or CI in the tree yet
-(`.github/workflows/` is empty). `/bin` and `/dist` are gitignored.
+`internal/ui.Version` holds the version string; there is no release tooling in the tree yet. CI is
+`.github/workflows/ci.yml`: a single job running gofmt, `go build`, `go vet` and
+`go test -race -count=1`, with the Go version read from `go.mod` so the two cannot drift. It is the
+same four commands as above, which is the point — a change that passes locally passes there.
+`/bin` and `/dist` are gitignored.
+
+## Changes go through a pull request
+
+**`main` is never pushed to directly.** Branch, push the branch, open a PR:
+
+```sh
+git switch -c <topic>
+gh pr create --fill                 # see docs/agents/issue-tracker.md for the gh conventions
+```
+
+CI triggers on `pull_request` as well as on pushes to `main`, so the checks are the same either way
+— but on a branch they run *before* the commit becomes one somebody may bisect, which is the whole
+reason the rule exists.
+
+Committing to `main` by mistake costs nothing as long as it has not been pushed, and it is worth
+knowing the way out rather than rebuilding the work:
+
+```sh
+git switch -c <topic>               # the branch now holds the commits
+git branch -f main origin/main      # and main goes back to where it was
+```
 
 ## Architecture
 
