@@ -17,6 +17,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/Seykhel/rclonetop/internal/collect"
+	"github.com/Seykhel/rclonetop/internal/config"
 	"github.com/Seykhel/rclonetop/internal/theme"
 	"github.com/Seykhel/rclonetop/internal/ui"
 	"github.com/Seykhel/rclonetop/internal/ui/graph"
@@ -42,6 +43,32 @@ func run() error {
 		fmt.Println("rclonetop", ui.Version)
 		return nil
 	}
+	if flags.defaultConfig {
+		// Printed rather than written. btop rewrites its own configuration on
+		// exit; rclonetop cannot do that and stay read-only, so where the file
+		// lands -- and whether it lands at all -- is left to the user's shell.
+		fmt.Print(config.DefaultFile(ui.Version))
+		return nil
+	}
+
+	// The file is laid underneath the command line rather than over it, so that
+	// a flag typed now always beats a setting saved months ago.
+	cfg, err := config.Load(flags.configPath)
+	if err != nil {
+		// -d is the exception, and deliberately so: it is what users are asked
+		// to paste into a bug report, and a host whose configuration file will
+		// not parse is exactly the sort that gets reported. Making the
+		// diagnostic depend on the thing being diagnosed would take it away
+		// when it is most needed. Everywhere else a file the user wrote wrong
+		// is worth stopping for, since they cannot see the message once the
+		// alternate screen is up.
+		if !flags.debug {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "rclonetop:", err, "- using the built-in defaults")
+		cfg = config.Defaults()
+	}
+	flags = applyConfig(flags, cfg)
 
 	th, err := theme.Load(flags.themeName)
 	if err != nil {
@@ -52,17 +79,19 @@ func run() error {
 	}
 	// Clamping the colour profile makes lipgloss quantise every colour down
 	// to the requested palette, so the same gradients keep working on a
-	// terminal that cannot render them at full depth.
+	// terminal that cannot render them at full depth. Which glyphs to draw was
+	// already settled by applyConfig, where it could still be told who asked.
 	symbol := graph.Symbol(flags.graphSymbol)
 
 	switch {
 	case flags.tty:
-		th = theme.TTY()
 		lipgloss.SetColorProfile(termenv.ANSI)
-		// A real console has neither the colours nor the glyphs, so forcing
-		// TTY mode has to cover both unless the symbol was set explicitly.
-		if symbol == "" {
-			symbol = graph.TTY
+		// A real console has neither the colours nor the glyphs, so forcing TTY
+		// mode replaces the theme as well -- unless the theme was named on the
+		// command line and force_tty only came from the file, which would be
+		// the file overruling a decision made just now.
+		if flags.explicit["tty"] || !flags.explicit["theme"] {
+			th = theme.TTY()
 		}
 	case flags.lowColor:
 		lipgloss.SetColorProfile(termenv.ANSI256)
@@ -129,6 +158,7 @@ func run() error {
 		UpdateMS:    flags.updateMS,
 		Base10:      flags.base10,
 		GraphSymbol: symbol,
+		ClockLayout: flags.clockLayout,
 		Host:        host,
 	}, cancel)
 

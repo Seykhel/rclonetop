@@ -157,6 +157,8 @@ rclonetop [options]
 | `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs unless `--graph-symbol` says otherwise |
 | `-l`, `--low-color` | limit output to 256 colours |
 | `--no-alt-screen` | draw in place instead of on the alternate screen |
+| `-c`, `--config <file>` | read this configuration file instead of searching |
+| `--default-config` | print a commented default configuration, then exit |
 | `-d`, `--debug` | print what each collector saw, then exit |
 | `-h`, `--help` | show usage |
 | `-V`, `--version` | show the version |
@@ -164,10 +166,67 @@ rclonetop [options]
 Keys: `q` or `Esc` to quit, `+` and `-` to refresh faster or slower.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
-already tuned there carries over. btop's `-c`, `-p` and `--vim-keys` are not
-accepted yet: they belong to the configuration file and the box presets, which
-are not written. A flag that is accepted and ignored is worse than one that is
-rejected, so they are not registered until they work.
+already tuned there carries over. btop's `-p` and `--vim-keys` are not accepted
+yet: they belong to the box presets and to having something on screen to move
+between, neither of which is written. A flag that is accepted and ignored is
+worse than one that is rejected, so they are not registered until they work.
+
+## Configuration
+
+Most of what the flags set can be set once in a file instead — everything that
+is a setting rather than an action, which leaves out `-d`, `-h`, `-V`, `-c` and
+`--default-config`, and for now `--no-alt-screen` as well:
+
+```
+$XDG_CONFIG_HOME/rclonetop/rclonetop.conf
+~/.config/rclonetop/rclonetop.conf
+```
+
+The first that exists is read, and anything given on the command line overrides
+it — including a flag whose value happens to equal the built-in default, which
+is still you choosing it.
+
+The format is btop's, and so are the key names wherever the meaning is the same,
+so a setting you have already tuned in `btop.conf` reads the same here:
+
+```
+color_theme = "dracula"
+theme_background = True
+graph_symbol = ""
+update_ms = 2000
+base_10_sizes = False
+force_tty = False
+truecolor = True
+clock_layout = "15:04:05"
+```
+
+rclonetop never writes that file. btop rewrites its own configuration on exit,
+which is not compatible with reading only, so the commented default btop would
+have written for you is printed instead and it is your shell that decides where
+it lands:
+
+```sh
+rclonetop --default-config > ~/.config/rclonetop/rclonetop.conf
+```
+
+A key this version does not recognise is ignored rather than refused, so one
+file can be shared between machines running different versions — the cost being
+that a misspelled key is silently skipped too. A key it does recognise with a
+value that cannot mean anything is an error naming the file and the line:
+`rclonetop.conf:3: update_ms: "soon" is not a number`.
+
+Two keys need a word of warning:
+
+- `clock_layout` is btop's `clock_format` under another name, because the value
+  is not the same thing: it is a Go reference layout — the time written out for
+  `Mon Jan 2 15:04:05 MST 2006` — rather than a strftime string. Pasting `%X`
+  from `btop.conf` is common enough that it, and the old key name, are both
+  refused with the explanation rather than printed literally in the header.
+- `graph_symbol` left empty is a third state rather than a fourth symbol: it
+  means nobody has chosen. Naming a symbol says something about the font, and
+  `force_tty` says something about the terminal, so a named symbol wins over
+  `force_tty` — but only within one source. A `--tty` typed at the prompt still
+  beats a symbol named in the file, like every other flag does.
 
 ## Themes
 
