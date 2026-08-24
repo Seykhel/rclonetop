@@ -133,13 +133,13 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 
 	var status []string
 	if p.Drift == 0 && p.Left.Files > 0 {
-		status = append(status, m.gradientStyle("free", 1).Render("in sync"))
+		status = append(status, m.magnitudeStyle("free", 1).Bold(true).Render("in sync"))
 	} else if p.Drift > 0 {
-		status = append(status, m.style("hi_fg").Render(fmt.Sprintf("%d differing", p.Drift)))
+		status = append(status, m.style("hi_fg").Bold(true).Render(fmt.Sprintf("%d differing", p.Drift)))
 	}
 	if !p.ListedAt.IsZero() {
-		status = append(status, m.style("inactive_fg").Render("listed ")+
-			m.style("main_fg").Render(Ago(m.now.Sub(p.ListedAt))))
+		status = append(status, m.label().Render("listed ")+
+			m.value().Render(Ago(m.now.Sub(p.ListedAt))))
 	}
 	if !p.FailedAt.IsZero() {
 		status = append(status, m.style("hi_fg").Render("last failure "+Ago(m.now.Sub(p.FailedAt))))
@@ -154,9 +154,9 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 
 // side renders one end's census.
 func (m Model) side(s model.SyncSide) string {
-	return m.style("main_fg").Render(fmt.Sprint(s.Files)) +
-		m.style("inactive_fg").Render(" files ") +
-		m.gradientStyle("used", 0.35).Render(Bytes(s.Bytes, m.opts.Base10))
+	return m.value().Render(fmt.Sprint(s.Files)) +
+		m.label().Render(" files ") +
+		m.magnitudeStyle("used", 0.35).Bold(true).Render(Bytes(s.Bytes, m.opts.Base10))
 }
 
 // denseCaches renders rclone's local cache footprint on a single line.
@@ -174,9 +174,9 @@ func (m Model) denseCaches(caches []model.CacheDir) string {
 	var scannedAt time.Time
 	for _, c := range caches {
 		parts = append(parts,
-			m.style("inactive_fg").Render(c.Kind+" ")+
-				m.gradientStyle("cached", 0.6).Render(Bytes(c.Bytes, m.opts.Base10))+
-				m.style("inactive_fg").Render(fmt.Sprintf(" (%d files)", c.Files)))
+			m.label().Render(c.Kind+" ")+
+				m.magnitudeStyle("cached", 0.6).Bold(true).Render(Bytes(c.Bytes, m.opts.Base10))+
+				m.label().Render(fmt.Sprintf(" (%d files)", c.Files)))
 		if c.ScannedAt.After(scannedAt) {
 			scannedAt = c.ScannedAt
 		}
@@ -201,7 +201,7 @@ func (m Model) denseHeader(width int) string {
 	if m.opts.Host != "" {
 		left += " " + m.style("hi_fg").Render(m.opts.Host)
 	}
-	right := m.style("main_fg").Render(m.now.Format(m.opts.ClockLayout))
+	right := m.value().Render(m.now.Format(m.opts.ClockLayout))
 
 	// The rule fills whatever is left, with one space of breathing room on
 	// each side so the text never touches it.
@@ -229,12 +229,12 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 
 	// Second line: identity and cost.
 	meta := []string{
-		m.style("inactive_fg").Render("pid ") + m.style("main_fg").Render(fmt.Sprint(p.PID)),
-		m.style("inactive_fg").Render("up ") + m.style("main_fg").Render(Duration(p.Uptime())),
-		m.style("inactive_fg").Render("rss ") + m.memStyle(p.RSS).Render(Bytes(p.RSS, m.opts.Base10)),
+		m.label().Render("pid ") + m.value().Render(fmt.Sprint(p.PID)),
+		m.label().Render("up ") + m.value().Render(Duration(p.Uptime())),
+		m.label().Render("rss ") + m.memStyle(p.RSS).Render(Bytes(p.RSS, m.opts.Base10)),
 	}
 	if p.Threads > 0 {
-		meta = append(meta, m.style("inactive_fg").Render("thr ")+m.style("main_fg").Render(fmt.Sprint(p.Threads)))
+		meta = append(meta, m.label().Render("thr ")+m.value().Render(fmt.Sprint(p.Threads)))
 	}
 	second := "  " + strings.Join(meta, m.style("div_line").Render(" · "))
 
@@ -248,9 +248,9 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 			"  " + m.rateCell("↑", p.WriteRate, "upload") +
 			m.sparkline(m.graphs.write, p.PID, "upload") +
 			m.style("div_line").Render("  ·  ") +
-			m.style("inactive_fg").Render("rd ") + m.style("main_fg").Render(Bytes(p.ReadTotal, m.opts.Base10)) +
+			m.label().Render("rd ") + m.value().Render(Bytes(p.ReadTotal, m.opts.Base10)) +
 			m.style("div_line").Render(" · ") +
-			m.style("inactive_fg").Render("wr ") + m.style("main_fg").Render(Bytes(p.WriteTotal, m.opts.Base10))
+			m.label().Render("wr ") + m.value().Render(Bytes(p.WriteTotal, m.opts.Base10))
 	} else {
 		// Saying so is the point: a zero here would be a lie, not a
 		// measurement.
@@ -273,7 +273,9 @@ func (m Model) rateCell(arrow string, bps float64, ramp string) string {
 	if scale < minRateScale {
 		scale = minRateScale
 	}
-	st := m.gradientStyle(ramp, bps/scale)
+	// Bold and blended rather than indexed: this is the line the dark-ramp
+	// problem was worst on, because an idle mount sits at frac 0 for hours.
+	st := m.magnitudeStyle(ramp, bps/scale).Bold(true)
 	return st.Render(arrow+" ") +
 		st.Render(fmt.Sprintf("%-*s", rateFieldWidth, Rate(bps, m.opts.Base10)))
 }
@@ -283,6 +285,11 @@ func (m Model) rateCell(arrow string, bps float64, ramp string) string {
 // The glyphs are coloured at the warm end of the same ramp that grades the
 // number beside them, so the graph reads as belonging to that number rather
 // than as a second, competing signal.
+//
+// This is the one place left that indexes a ramp directly, and it is entitled
+// to: braille cells are area, which is what btop's ramps were drawn for. Every
+// other caller went over to magnitudeStyle -- if a second raw gradientStyle
+// appears on something made of letters, that is the regression.
 func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) string {
 	s := m.graphs.spark(rings, pid, m.opts.GraphSymbol)
 	if s == "" {
@@ -295,7 +302,7 @@ func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) strin
 // rclone with a large VFS cache can genuinely climb, and that is worth seeing.
 func (m Model) memStyle(rss uint64) lipgloss.Style {
 	const saturate = 1 << 30
-	return m.gradientStyle("used", float64(rss)/saturate)
+	return m.magnitudeStyle("used", float64(rss)/saturate).Bold(true)
 }
 
 // denseFooter summarises which collectors are alive, so an empty screen can
@@ -319,8 +326,9 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 		parts = append(parts, m.style("inactive_fg").Render("waiting for collectors"))
 	}
 
-	left := m.style("inactive_fg").Render("sources ") + strings.Join(parts, m.style("div_line").Render(" · "))
-	right := m.style("inactive_fg").Render(fmt.Sprintf("%dms  q quit", m.opts.UpdateMS))
+	left := m.label().Render("sources ") + strings.Join(parts, m.style("div_line").Render(" · "))
+	right := m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)) +
+		m.style("inactive_fg").Render("  q quit")
 
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {

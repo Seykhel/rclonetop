@@ -274,11 +274,27 @@ transfer throughput, and `process` colours the files in flight. Two built-in
 themes need no files: `default`, which reproduces btop's, and `tty` for
 eight-colour consoles.
 
+The ramps are used the way btop uses them, which is not the way it looks. btop's
+ramps start dark on purpose — `download_start` is `#291f75` — because it only
+ever paints those ends as *filled cells*, where a dark cell against a dark
+background honestly reads as "not much". Colouring **letters** that way instead
+makes an idle mount write `↓ 0 B/s` in near-black violet, which is a measurement
+nobody can read. So area is graded along the ramp and text is blended from the
+foreground colour *towards* it: legible at zero, the ramp's own hot end at full
+scale, and graded in between.
+
 ## Reporting a problem
 
 `rclonetop -d` prints what every collector saw, including the ones that found
 nothing. Paste that rather than a screenshot — it shows which source went quiet
 and why.
+
+It opens with a `display` block: the detected colour profile, the theme in use,
+the graph symbol, and `TERM` and `COLORTERM`. That covers the one complaint the
+collector output cannot answer, which is that the colours look wrong. It also
+says when stdout is not a terminal — which it is not whenever you redirect the
+output, and the profile on that line is then the pipe's rather than your
+screen's.
 
 ## Building and testing
 
