@@ -35,7 +35,7 @@ func (m Model) jobProgress(job model.Job) string {
 	var parts []string
 	if frac, ok := s.Done(); ok {
 		parts = append(parts,
-			m.magnitudeStyle("cpu", frac).Bold(true).Render(fmt.Sprintf("%.0f%%", frac*100)))
+			m.magnitudeStyle("cpu", frac).Render(fmt.Sprintf("%.0f%%", frac*100)))
 	}
 	if s.TotalBytes > 0 {
 		parts = append(parts,
@@ -61,7 +61,7 @@ func (m Model) jobProgress(job model.Job) string {
 		if s.FatalError {
 			errs += ", fatal"
 		}
-		parts = append(parts, m.style("hi_fg").Bold(true).Render(errs))
+		parts = append(parts, m.alarm().Render(errs))
 	}
 	if s.ETAKnown {
 		// Only when rclone says so. It writes "-" whenever it cannot estimate,
