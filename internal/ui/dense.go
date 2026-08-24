@@ -133,9 +133,9 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 
 	var status []string
 	if p.Drift == 0 && p.Left.Files > 0 {
-		status = append(status, m.accentStyle(accentRunning).Bold(true).Render("in sync"))
+		status = append(status, m.accentStyle(accentRunning).Render("in sync"))
 	} else if p.Drift > 0 {
-		status = append(status, m.style("hi_fg").Bold(true).Render(fmt.Sprintf("%d differing", p.Drift)))
+		status = append(status, m.alarm().Render(fmt.Sprintf("%d differing", p.Drift)))
 	}
 	if !p.ListedAt.IsZero() {
 		status = append(status, m.label().Render("listed ")+
@@ -156,7 +156,7 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 func (m Model) side(s model.SyncSide) string {
 	return m.value().Render(fmt.Sprint(s.Files)) +
 		m.label().Render(" files ") +
-		m.accentStyle(accentSyncSize).Bold(true).Render(Bytes(s.Bytes, m.opts.Base10))
+		m.accentStyle(accentSyncSize).Render(Bytes(s.Bytes, m.opts.Base10))
 }
 
 // denseCaches renders rclone's local cache footprint on a single line.
@@ -175,7 +175,7 @@ func (m Model) denseCaches(caches []model.CacheDir) string {
 	for _, c := range caches {
 		parts = append(parts,
 			m.label().Render(c.Kind+" ")+
-				m.accentStyle(accentCacheSize).Bold(true).Render(Bytes(c.Bytes, m.opts.Base10))+
+				m.accentStyle(accentCacheSize).Render(Bytes(c.Bytes, m.opts.Base10))+
 				m.label().Render(fmt.Sprintf(" (%d files)", c.Files)))
 		if c.ScannedAt.After(scannedAt) {
 			scannedAt = c.ScannedAt
@@ -275,7 +275,7 @@ func (m Model) rateCell(arrow string, bps float64, ramp string) string {
 	}
 	// Bold and blended rather than indexed: this is the line the dark-ramp
 	// problem was worst on, because an idle mount sits at frac 0 for hours.
-	st := m.magnitudeStyle(ramp, bps/scale).Bold(true)
+	st := m.magnitudeStyle(ramp, bps/scale)
 	return st.Render(arrow+" ") +
 		st.Render(fmt.Sprintf("%-*s", rateFieldWidth, Rate(bps, m.opts.Base10)))
 }
@@ -286,10 +286,12 @@ func (m Model) rateCell(arrow string, bps float64, ramp string) string {
 // number beside them, so the graph reads as belonging to that number rather
 // than as a second, competing signal.
 //
-// This is the one place left that indexes a ramp directly, and it is entitled
-// to: braille cells are area, which is what btop's ramps were drawn for. Every
-// other caller went over to magnitudeStyle -- if a second raw gradientStyle
-// appears on something made of letters, that is the regression.
+// This is the one caller of gradientStyle left, and the only one entitled to be:
+// braille cells are area, which is what btop's ramps were drawn for. Letters go
+// through magnitudeStyle or accentStyle depending on whether their fraction was
+// measured or chosen. A second raw gradientStyle on something made of letters is
+// the regression -- and it would arrive unbold, since those two carry the weight
+// and this one does not.
 func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) string {
 	s := m.graphs.spark(rings, pid, m.opts.GraphSymbol)
 	if s == "" {
@@ -302,7 +304,7 @@ func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) strin
 // rclone with a large VFS cache can genuinely climb, and that is worth seeing.
 func (m Model) memStyle(rss uint64) lipgloss.Style {
 	const saturate = 1 << 30
-	return m.magnitudeStyle("used", float64(rss)/saturate).Bold(true)
+	return m.magnitudeStyle("used", float64(rss)/saturate)
 }
 
 // denseFooter summarises which collectors are alive, so an empty screen can
@@ -328,7 +330,7 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 
 	left := m.label().Render("sources ") + strings.Join(parts, m.style("div_line").Render(" · "))
 	right := m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)) +
-		m.style("inactive_fg").Render("  q quit")
+		m.label().Render("  q quit")
 
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {

@@ -152,13 +152,21 @@ saturated primary — it scores `#ff0000` at 54 — which is why the accent test
 built-in theme only and the `tty` one is exempt.
 
 **Three levels of emphasis, and each boundary was a mistake on one side of it.** `Model.label()` is
-halfway between `main_fg` and `inactive_fg`; `Model.value()` is `main_fg` and **not bold**; bold
-rides with colour, belonging to `magnitudeStyle` and `accentStyle` alone. Labels were `inactive_fg`
-(`#40`, the colour that means *switched off*), which made most of the screen invisible and left
-nothing to say "switched off" with. Made `main_fg` instead, they were indistinguishable from the
-figures they name. And bolding every value made the screen uniformly bright and flat — emphasising
-everything emphasises nothing. `inactive_fg` is now only for what is genuinely inert or stale:
-"collecting…", "throughput unavailable", "idle", a staleness note.
+halfway between `main_fg` and `inactive_fg`; `Model.value()` is `main_fg` and **not bold**. Labels
+were `inactive_fg` (`#40`, the colour that means *switched off*), which made most of the screen
+invisible and left nothing to say "switched off" with. Made `main_fg` instead, they were
+indistinguishable from the figures they name. And bolding every value made the screen uniformly
+bright and flat — emphasising everything emphasises nothing.
+
+**Bold rides with colour, and the styles carry it themselves.** `magnitudeStyle`, `accentStyle` and
+`alarm` come back bold; `gradientStyle` does not, because area has no glyph to thicken. Do not add
+`.Bold(true)` at a call site: that is how this started, as a sentence in this file plus a
+`.Bold(true)` repeated fourteen times with not one caller wanting otherwise. A rule with no
+exceptions belongs in the constructor, and `TestWeightIsBuiltIntoTheColouredStyles` keeps it there.
+
+`inactive_fg` is only for what is genuinely inert or stale: "collecting…", "throughput unavailable",
+"idle", a staleness note. Not for a permanent key hint — `q quit` is chrome that is always actionable
+and takes `label()`, which is the trap this reservation exists to catch.
 
 **Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
 data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),
@@ -291,7 +299,12 @@ Any new collector should follow the same shape: a real constructor plus an `...A
   harder to notice in a file than at a prompt. (Unrecognised keys are still skipped in silence, for
   the forward-compatibility reason below — that is a cost of the design, not a warning system.)
 - **No new dependencies without a real reason.** Graphing and theme parsing are hand-written
-  precisely because the requirement is narrower than any library's.
+  precisely because the requirement is narrower than any library's. `github.com/charmbracelet/x/term`
+  is a direct require and was not a new dependency when it became one: bubbletea already links it to
+  take the alternate screen, so `go mod tidy` moved one line and added no code. It answers "is stdout
+  a terminal" for `-d`, and it is there because the hand-rolled version was *wrong* — a character
+  device is not a tty, `/dev/null` is one too, and the comment asserting otherwise was believed for
+  exactly as long as nobody checked. `term.IsTerminal` is a real `ioctl(TCGETS)`.
 - Comments in this codebase explain *why*, at length, especially where the obvious implementation is
   wrong. Match that register when editing; do not strip the rationale.
 

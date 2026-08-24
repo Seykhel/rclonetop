@@ -229,8 +229,13 @@ func (m Model) gradientStyle(ramp string, frac float64) lipgloss.Style {
 //
 // theme.Blend does the mixing and already existed for fadedAlarm, which cools an
 // error towards inactive_fg as it ages. Same idea, opposite direction.
+// It comes back bold, and callers do not get a say. "Bold rides with colour and
+// only with colour" was a sentence in CLAUDE.md and a .Bold(true) repeated at
+// fourteen call sites, with not one of them wanting it otherwise. A rule with no
+// exceptions belongs in the constructor, where it cannot be forgotten by the
+// fifteenth.
 func (m Model) magnitudeStyle(ramp string, frac float64) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(m.magnitudeColor(ramp, frac).Lipgloss())
+	return lipgloss.NewStyle().Foreground(m.magnitudeColor(ramp, frac).Lipgloss()).Bold(true)
 }
 
 // magnitudeColor is magnitudeStyle's arithmetic on its own, so the property
@@ -321,9 +326,22 @@ var textAccents = []accent{
 	accentRunning, accentBusy, accentFailed,
 }
 
-// accentStyle colours text at a fixed, chosen point on a ramp.
+// accentStyle colours text at a fixed, chosen point on a ramp. Bold for the same
+// reason magnitudeStyle is, and built in for the same reason.
 func (m Model) accentStyle(a accent) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(m.accentColor(a).Lipgloss())
+	return lipgloss.NewStyle().Foreground(m.accentColor(a).Lipgloss()).Bold(true)
+}
+
+// alarm is the styling for something wrong that is wrong right now -- a stopped
+// timer, a non-zero exit, a count of errors. hi_fg and bold, which is the same
+// bargain the two above strike: the colour says what kind of thing it is, the
+// weight says it is worth reading before the line beside it.
+//
+// fadedAlarm is the other half of this and the distinction matters: it cools the
+// same colour towards inactive_fg as an error ages, because a failure from
+// yesterday and a failure from a minute ago are not the same news.
+func (m Model) alarm() lipgloss.Style {
+	return m.style("hi_fg").Bold(true)
 }
 
 // accentColor is accentStyle's arithmetic on its own, so every chosen point can

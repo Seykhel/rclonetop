@@ -158,3 +158,27 @@ func TestALabelIsDimmerThanItsValueAndBrighterThanInert(t *testing.T) {
 		t.Error("a plain value is bold; bold belongs to the styles that carry a magnitude")
 	}
 }
+
+func TestWeightIsBuiltIntoTheColouredStyles(t *testing.T) {
+	// "Bold rides with colour and only with colour" was a sentence in CLAUDE.md
+	// and a .Bold(true) repeated at fourteen call sites, none of which wanted it
+	// otherwise. A rule with no exceptions belongs in the constructor, where the
+	// fifteenth caller cannot forget it -- and this is what says so, so that
+	// nobody "tidies" the weight back out into the callers.
+	m := New(nil, Options{}, nil)
+
+	if !m.magnitudeStyle("download", 0.5).GetBold() {
+		t.Error("magnitudeStyle is not bold on its own")
+	}
+	if !m.accentStyle(accentCacheSize).GetBold() {
+		t.Error("accentStyle is not bold on its own")
+	}
+	if !m.alarm().GetBold() {
+		t.Error("alarm is not bold on its own")
+	}
+	// And the area style is not, because area carries no weight -- a braille
+	// cell has no glyph shape to thicken, only a colour.
+	if m.gradientStyle("download", 0.75).GetBold() {
+		t.Error("gradientStyle is bold; it fills area, where weight means nothing")
+	}
+}

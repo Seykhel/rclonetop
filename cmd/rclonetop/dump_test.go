@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -45,6 +47,41 @@ func TestWriteDisplaySaysWhenTheProfileIsThePipesAndNotTheScreens(t *testing.T) 
 	}
 	if strings.Contains(onATerminal.String(), "not a terminal") {
 		t.Errorf("a dump straight to a terminal carries the caveat anyway:\n%s", onATerminal.String())
+	}
+}
+
+func TestDevNullIsNotATerminal(t *testing.T) {
+	// The case that broke the first version of this. isTerminal asked the mode
+	// bits -- "is this a character device" -- which is true of a tty and false
+	// of a pipe and of a regular file, and *also true of /dev/null*. So
+	// `rclonetop -d > /dev/null` reported a terminal and suppressed the caveat
+	// that the answer exists to carry.
+	//
+	// Nobody reads /dev/null, so the practical cost was nil. The reasoning
+	// written above the check was what actually failed, and this repo holds that
+	// a comment explaining why is load-bearing: a false rationale is worse than
+	// no rationale, because the next reader believes it.
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Skipf("cannot open %s: %v", os.DevNull, err)
+	}
+	defer f.Close()
+
+	if isTerminal(f) {
+		t.Errorf("%s reports as a terminal: the check is looking at the mode bits again", os.DevNull)
+	}
+}
+
+func TestARegularFileIsNotATerminal(t *testing.T) {
+	// The ordinary shape of a bug report: `rclonetop -d > dump.txt`.
+	f, err := os.Create(filepath.Join(t.TempDir(), "dump.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if isTerminal(f) {
+		t.Error("a regular file reports as a terminal")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/muesli/termenv"
 
 	"github.com/Seykhel/rclonetop/internal/collect"
@@ -177,13 +178,18 @@ func writeDisplay(w io.Writer, d display) {
 
 // isTerminal reports whether f is a terminal rather than a pipe or a file.
 //
-// Asked of the mode bits rather than through a terminal library, because the
-// answer is wanted in one place and adding a dependency for one bit is not a
-// trade this repo makes. A character device is what a tty is and what a pipe,
-// a regular file and /dev/null all are not.
+// This asked the mode bits first -- a character device -- on the reasoning that
+// one bit did not justify a dependency. The reasoning was sound and the premise
+// was false: /dev/null is a character device too, so `-d > /dev/null` reported a
+// terminal and suppressed the very caveat the answer exists to carry.
+//
+// term.IsTerminal is a real ioctl(TCGETS), which fails with ENOTTY on anything
+// that is not a tty, /dev/null included. It costs nothing to reach for: x/term
+// is already in the module graph and already linked into the binary, because
+// bubbletea uses it to take the alternate screen. Only go.mod changes, and only
+// to admit a dependency that was there all along.
 func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(f.Fd())
 }
 
 // symbolName spells out the unchosen case rather than printing an empty string,
