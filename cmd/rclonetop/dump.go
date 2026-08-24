@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/muesli/termenv"
 
 	"github.com/Seykhel/rclonetop/internal/collect"
 	"github.com/Seykhel/rclonetop/internal/model"
 	"github.com/Seykhel/rclonetop/internal/ui"
+	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
 
 // dump runs every collector once and prints the raw result as text.
@@ -17,7 +21,9 @@ import (
 // It exists so a problem can be reported without a screenshot: the output shows
 // exactly what each collector saw, including the ones that found nothing, which
 // is the first thing worth knowing when the display looks emptier than expected.
-func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base10 bool) error {
+func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base10 bool, d display) error {
+	writeDisplay(w, d)
+
 	for _, c := range collectors {
 		fmt.Fprintf(w, "== %s (source %s, every %s)\n", c.Name(), c.Source(), c.Interval())
 		if !c.Available() {
@@ -124,6 +130,87 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		}
 	}
 	return nil
+}
+
+// display is what -d reports about how the screen would have been coloured.
+//
+// "The colours look washed out" is the one complaint a collector dump cannot
+// answer, because it is not about what was collected. It has three candidate
+// causes -- the terminal cannot do 24-bit colour, rclonetop was told to pretend
+// it cannot, or the theme is not the one the user thinks -- and they are
+// indistinguishable from a screenshot. All three are printed here instead.
+type display struct {
+	// Profile is what termenv detected, after -t and -l have had their say. It
+	// is read from lipgloss rather than the flags, so it reports what the
+	// gradients were actually quantised to and not what was asked for.
+	Profile termenv.Profile
+	Theme   string
+	Symbol  graph.Symbol
+
+	// Term and ColorTerm are the two variables that decide the profile. The
+	// investigation behind this needed exactly them: tmux advertising *:RGB and
+	// propagating COLORTERM is what ruled colour depth out as the cause, and
+	// without them in the dump that was an argument rather than a reading.
+	Term, ColorTerm string
+
+	// Terminal says whether stdout is one, and it has to be printed because of
+	// how this output is used. termenv reports Ascii for a pipe, correctly --
+	// and users are asked to paste -d into a bug report, which means they run it
+	// through a pipe or a redirection every single time. Reporting "no colour"
+	// to somebody whose complaint is that the colours look wrong would answer
+	// the wrong question with total confidence, so when this is false the two
+	// environment variables above are the reading that matters and the profile
+	// line is about the pipe.
+	Terminal bool
+}
+
+func writeDisplay(w io.Writer, d display) {
+	fmt.Fprintln(w, "== display")
+	fmt.Fprintf(w, "   colour profile %s\n", profileName(d.Profile))
+	if !d.Terminal {
+		fmt.Fprintln(w, "   (stdout is not a terminal, so that is the pipe's profile, not the screen's;")
+		fmt.Fprintln(w, "    TERM and COLORTERM below are what the real terminal advertises)")
+	}
+	fmt.Fprintf(w, "   theme %q  graph symbol %s\n", d.Theme, symbolName(d.Symbol))
+	fmt.Fprintf(w, "   TERM=%q COLORTERM=%q\n", d.Term, d.ColorTerm)
+}
+
+// isTerminal reports whether f is a terminal rather than a pipe or a file.
+//
+// Asked of the mode bits rather than through a terminal library, because the
+// answer is wanted in one place and adding a dependency for one bit is not a
+// trade this repo makes. A character device is what a tty is and what a pipe,
+// a regular file and /dev/null all are not.
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// symbolName spells out the unchosen case rather than printing an empty string,
+// which reads as a missing value instead of as the third state it is.
+func symbolName(s graph.Symbol) string {
+	if s == "" {
+		return fmt.Sprintf("%q (nobody chose one; this is the default)", graph.Braille)
+	}
+	return fmt.Sprintf("%q", s)
+}
+
+// profileName spells out what termenv detected. The constant's own name is not
+// enough on its own: "Ascii" reads as a glyph problem rather than as "this
+// terminal was given no colour at all".
+func profileName(p termenv.Profile) string {
+	switch p {
+	case termenv.TrueColor:
+		return "truecolor (24-bit, gradients whole)"
+	case termenv.ANSI256:
+		return "256 colours (gradients quantised, banding expected)"
+	case termenv.ANSI:
+		return "8 colours"
+	case termenv.Ascii:
+		return "none (monochrome)"
+	default:
+		return fmt.Sprintf("unrecognised (%d)", p)
+	}
 }
 
 // eta formats an estimate, keeping "rclone cannot say" distinct from "no time

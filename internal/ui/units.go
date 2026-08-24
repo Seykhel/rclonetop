@@ -81,13 +81,13 @@ func (m Model) denseUnit(row model.UnitRow, width int) string {
 	var suffix string
 	if u.Scope == "system" {
 		// Worth saying: a system unit is not the one a user's own timer runs.
-		suffix += m.style("inactive_fg").Render(" (system)")
+		suffix += m.label().Render(" (system)")
 	}
 	suffix += "  " + m.unitState(u)
 
 	room := width - lipgloss.Width(head) - lipgloss.Width(suffix)
 	name := Truncate(strings.TrimSuffix(u.Name, ".service"), room, false)
-	head += m.style("main_fg").Render(name) + suffix
+	head += m.value().Render(name) + suffix
 
 	var parts []string
 	if last := row.LastRun; !last.IsZero() {
@@ -95,25 +95,25 @@ func (m Model) denseUnit(row model.UnitRow, width int) string {
 			// A job that is up has not "last run" at any point: the timestamp
 			// measures how long it has been going, and "last 14h ago" reads as
 			// though it had finished.
-			parts = append(parts, m.style("inactive_fg").Render("running for ")+
-				m.style("main_fg").Render(Duration(m.now.Sub(last))))
+			parts = append(parts, m.label().Render("running for ")+
+				m.value().Render(Duration(m.now.Sub(last))))
 		} else {
-			parts = append(parts, m.style("inactive_fg").Render("last ")+
+			parts = append(parts, m.label().Render("last ")+
 				m.runStyle(u, last).Render(Ago(m.now.Sub(last))))
 		}
 	}
 	switch {
 	case !timer.NextElapse.IsZero():
-		parts = append(parts, m.style("inactive_fg").Render("next ")+
-			m.style("main_fg").Render(m.until(timer.NextElapse)))
+		parts = append(parts, m.label().Render("next ")+
+			m.value().Render(m.until(timer.NextElapse)))
 	case timer.Name != "":
 		// A timer with no next elapse has been stopped. On this setup that is
 		// exactly what a failed bisync does to its own schedule, so it must not
 		// read as a blank.
-		parts = append(parts, m.style("hi_fg").Render("timer stopped"))
+		parts = append(parts, m.style("hi_fg").Bold(true).Render("timer stopped"))
 	}
 	if exit := u.Exit(); exit != "" {
-		parts = append(parts, m.style("hi_fg").Render(exit))
+		parts = append(parts, m.style("hi_fg").Bold(true).Render(exit))
 	}
 
 	// What the unit's own log said, which systemd never sees: a job started
@@ -137,7 +137,7 @@ func (m Model) denseUnit(row model.UnitRow, width int) string {
 // rest -- aborted, interrupted -- are the reason anyone is looking.
 func (m Model) outcomeStyle(job model.Job) lipgloss.Style {
 	if job.Outcome == "successful" {
-		return m.gradientStyle("free", 1)
+		return m.magnitudeStyle("free", 1).Bold(true)
 	}
 	return m.style("hi_fg")
 }
@@ -154,20 +154,20 @@ func (m Model) unitState(u model.Unit) string {
 		if u.ActiveState == "failed" {
 			label = "failed"
 		}
-		return m.gradientStyle("temp", 1).Bold(true).Render(label)
+		return m.magnitudeStyle("temp", 1).Bold(true).Render(label)
 	case u.Running():
 		// Covers the oneshot case too: systemd holds a oneshot at "activating"
 		// for the whole of its ExecStart, so a backup in flight is never
 		// "active" and would otherwise never be called running.
-		return m.gradientStyle("free", 1).Render("running")
+		return m.magnitudeStyle("free", 1).Bold(true).Render("running")
 	case u.ActiveState == "active":
 		// active/exited: a oneshot with RemainAfterExit=yes. systemd counts it
 		// as active even though nothing is executing.
-		return m.gradientStyle("free", 0.4).Render("active")
+		return m.magnitudeStyle("free", 0.4).Bold(true).Render("active")
 	case u.ActiveState == "deactivating":
-		return m.gradientStyle("cpu", 0.5).Render("stopping")
+		return m.magnitudeStyle("cpu", 0.5).Bold(true).Render("stopping")
 	case u.ActiveState == "reloading":
-		return m.gradientStyle("cpu", 0.5).Render("reloading")
+		return m.magnitudeStyle("cpu", 0.5).Bold(true).Render("reloading")
 	case u.ActiveState == "":
 		return m.style("inactive_fg").Render("scheduled")
 	default:
@@ -210,9 +210,9 @@ func (m Model) runStyle(u model.Unit, last time.Time) lipgloss.Style {
 	}
 	age := m.now.Sub(last)
 	if age <= 0 {
-		return m.gradientStyle("temp", 0)
+		return m.magnitudeStyle("temp", 0).Bold(true)
 	}
-	return m.gradientStyle("temp", float64(age)/float64(staleSuccess))
+	return m.magnitudeStyle("temp", float64(age)/float64(staleSuccess)).Bold(true)
 }
 
 // oneLine flattens a journal message. Entries routinely span several lines, and

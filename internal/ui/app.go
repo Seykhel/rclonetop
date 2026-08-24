@@ -199,8 +199,75 @@ func (m Model) style(key string) lipgloss.Style {
 
 // gradientStyle grades a value along a named ramp. frac is clamped by the
 // theme, so callers can pass a raw ratio.
+//
+// This is the *area* colour, and only area may use it: a filled graph cell or a
+// meter segment. btop's ramps begin dark on purpose -- download_start is
+// #291f75 and used_start is #592b26 -- because a dark filled cell reads as "not
+// much" against the background. A dark *glyph* reads as nothing at all.
+// Anything that draws letters wants magnitudeStyle instead.
 func (m Model) gradientStyle(ramp string, frac float64) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(m.opts.Theme.Gradient(ramp, frac).Lipgloss())
+}
+
+// magnitudeStyle grades text by magnitude without ever painting it in the dark
+// end of a ramp.
+//
+// Indexing a ramp directly is right for area and wrong for text, and the
+// difference is the whole reason this exists. An idle mount has frac 0, so
+// rateCell used to write "↓ 0 B/s" in download_start -- near-black violet on a
+// dark background, a measurement the user cannot read. Every label on screen
+// suffered a milder version of it: 36 MiB of resident memory is 0.035 of the
+// 1 GiB saturation point, which came out a dull maroon.
+//
+// So the ramp is not indexed for the colour, it is blended *towards*. At frac 0
+// the text is plain main_fg and perfectly legible; as the magnitude climbs it
+// takes on more of the ramp until, at 1, it is the ramp's own hot end. The
+// value reads at a glance exactly as btop's does, and it reads at all when
+// there is nothing to report -- which for a backup monitor is most of the time.
+//
+// theme.Blend does the mixing and already existed for fadedAlarm, which cools an
+// error towards inactive_fg as it ages. Same idea, opposite direction.
+func (m Model) magnitudeStyle(ramp string, frac float64) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(m.magnitudeColor(ramp, frac).Lipgloss())
+}
+
+// magnitudeColor is magnitudeStyle's arithmetic on its own, so the property
+// that matters can be asserted on a colour rather than inferred from an escape
+// sequence.
+func (m Model) magnitudeColor(ramp string, frac float64) theme.Color {
+	// Blend clamps neither argument, and a rate divided by an observed peak can
+	// exceed one on the sample that sets a new peak. Gradient clamps its own
+	// index; this has to clamp the mixing fraction, or the arithmetic runs past
+	// the ramp and comes back out the other side.
+	switch {
+	case frac < 0:
+		frac = 0
+	case frac > 1:
+		frac = 1
+	}
+	return theme.Blend(
+		m.opts.Theme.Color("main_fg"),
+		m.opts.Theme.Gradient(ramp, frac),
+		frac)
+}
+
+// label is the styling for the words that name a value -- "pid", "up", "rss".
+//
+// They were inactive_fg, which is #40 in the built-in theme: dark grey chosen to
+// mean "this is switched off". Using it for ordinary labels made two thirds of
+// the screen nearly invisible and left nothing to say "switched off" with.
+// inactive_fg is now reserved for what is genuinely inert or stale, and the
+// hierarchy between a label and its value is carried by weight instead --
+// labels plain, values bold. That distinction survives on a terminal with eight
+// colours, which a distinction made of colour would not.
+func (m Model) label() lipgloss.Style {
+	return m.style("main_fg")
+}
+
+// value is the styling for a figure that carries no magnitude of its own -- a
+// PID, a thread count, a duration.
+func (m Model) value() lipgloss.Style {
+	return m.style("main_fg").Bold(true)
 }
 
 // defaultWidth is what the dense view assumes before the terminal has reported

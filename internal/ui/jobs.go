@@ -35,40 +35,40 @@ func (m Model) jobProgress(job model.Job) string {
 	var parts []string
 	if frac, ok := s.Done(); ok {
 		parts = append(parts,
-			m.gradientStyle("cpu", frac).Render(fmt.Sprintf("%.0f%%", frac*100)))
+			m.magnitudeStyle("cpu", frac).Bold(true).Render(fmt.Sprintf("%.0f%%", frac*100)))
 	}
 	if s.TotalBytes > 0 {
 		parts = append(parts,
-			m.style("main_fg").Render(Bytes(s.Bytes, m.opts.Base10))+
+			m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
 				m.style("div_line").Render(" / ")+
-				m.style("inactive_fg").Render(Bytes(s.TotalBytes, m.opts.Base10)))
+				m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)))
 	}
 	switch {
 	case s.TotalTransfers > 0:
 		parts = append(parts,
-			m.style("main_fg").Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
-				m.style("inactive_fg").Render(" files"))
+			m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
+				m.label().Render(" files"))
 	case s.Checks > 0:
 		// A bisync with nothing to move is the healthy case, and it would look
 		// idle if the only counters on the line were the transfers it did not
 		// have to make.
 		parts = append(parts,
-			m.style("main_fg").Render(fmt.Sprint(s.Checks))+
-				m.style("inactive_fg").Render(" checked"))
+			m.value().Render(fmt.Sprint(s.Checks))+
+				m.label().Render(" checked"))
 	}
 	if s.Errors > 0 {
 		errs := fmt.Sprintf("%d errors", s.Errors)
 		if s.FatalError {
 			errs += ", fatal"
 		}
-		parts = append(parts, m.style("hi_fg").Render(errs))
+		parts = append(parts, m.style("hi_fg").Bold(true).Render(errs))
 	}
 	if s.ETAKnown {
 		// Only when rclone says so. It writes "-" whenever it cannot estimate,
 		// and an ETA of zero would read as "any moment now".
 		parts = append(parts,
-			m.style("inactive_fg").Render("ETA ")+
-				m.style("main_fg").Render(Duration(s.ETA)))
+			m.label().Render("ETA ")+
+				m.value().Render(Duration(s.ETA)))
 	}
 
 	if len(parts) == 0 {

@@ -163,7 +163,18 @@ func run() error {
 	}
 
 	if flags.debug {
-		return dump(ctx, os.Stdout, collectors, flags.base10)
+		// The profile is read back from lipgloss rather than derived from the
+		// flags, so what -d reports is what the gradients were actually
+		// quantised to -- including whatever termenv worked out on its own when
+		// neither -t nor -l said anything.
+		return dump(ctx, os.Stdout, collectors, flags.base10, display{
+			Profile:   lipgloss.ColorProfile(),
+			Theme:     th.Name,
+			Symbol:    symbol,
+			Term:      os.Getenv("TERM"),
+			ColorTerm: os.Getenv("COLORTERM"),
+			Terminal:  isTerminal(os.Stdout),
+		})
 	}
 
 	results := collect.Run(ctx, collectors)

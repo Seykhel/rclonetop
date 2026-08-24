@@ -30,7 +30,13 @@ older than `errorRetention`; anything asserting that an error is *kept* builds i
 
 `-d` runs every collector twice, 500 ms apart, prints what each one saw and exits. It is the fastest
 way to inspect collector output without a TTY, and it is what users are asked to paste in bug
-reports. Because of that it is the one caller that survives a configuration file it cannot parse:
+reports. It opens with a `== display` block — colour profile, theme, graph symbol, `TERM` and
+`COLORTERM` — because "the colours look washed out" is the one complaint a collector dump cannot
+otherwise answer. It also says when stdout is not a terminal, and that caveat is load-bearing:
+termenv correctly reports `Ascii` for a pipe, and a user pasting `-d` into a bug report has
+*always* piped it, so the bare profile line would confidently answer the wrong question.
+
+Because of that it is the one caller that survives a configuration file it cannot parse:
 `main` warns on stderr and carries on with the defaults rather than returning the error, since a host
 whose conf is broken is exactly the sort that gets reported and the diagnostic must not depend on the
 thing being diagnosed.
@@ -117,8 +123,31 @@ keys, a clock `tick` (so uptimes advance with no new data), and `resultMsg` from
 channel — `waitFor` re-arms itself after each one. There is a single view, `renderDense` in
 `dense.go`, plus `units.go`, `graphs.go`, `format.go` (`Bytes`/`Rate`/`Duration`/`Ago`/`Truncate`).
 It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
-something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here, via
-`Model.style(key)` and `Model.gradientStyle(ramp, frac)`.
+something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here.
+
+**A ramp is indexed raw only for area; text is blended towards it.** This is the one rule of the
+colour vocabulary and it is easy to break by accident:
+
+- `Model.gradientStyle(ramp, frac)` indexes the ramp directly and is for **filled cells** — the
+  sparkline, and meters when they exist. btop's ramps begin dark on purpose (`download_start` is
+  `#291f75`, `used_start` is `#592b26`) because a dark *cell* against a dark background reads as "not
+  much", which is true.
+- `Model.magnitudeStyle(ramp, frac)` is for **letters**, and blends from `main_fg` towards the ramp
+  by `frac` rather than indexing it. A dark glyph reads as nothing at all: an idle mount sits at
+  `frac` 0 for hours, and indexing wrote `↓ 0 B/s` in near-black violet. At 0 the text is plain
+  `main_fg`; at 1 it is the ramp's own hot end, so nothing is lost at the top.
+  `TestTextStaysLegibleAcrossTheWholeRamp` holds every ramp above half of `main_fg`'s luminance over
+  the low end, and `TestTheRawRampReallyIsTooDarkForText` pins the premise so the cure cannot be
+  "simplified" back into the disease.
+- `Model.label()` and `Model.value()` are the pair for a named figure. `inactive_fg` is `#40` and
+  means *switched off*; it used to label `pid`, `up`, `rss`, `thr`, `rd` and `wr`, which made most of
+  the screen invisible and left nothing to say "switched off" with. Labels are `main_fg`, values are
+  bold, and the hierarchy is carried by weight — which survives an eight-colour console, where one
+  made of colour would not. `inactive_fg` is now only for what is genuinely inert or stale:
+  "collecting…", "throughput unavailable", "idle", a staleness note.
+
+Only `sparkline` still calls `gradientStyle`. A second raw call on something made of letters is the
+regression.
 
 **Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
 data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),
