@@ -137,7 +137,7 @@ func (m Model) denseUnit(row model.UnitRow, width int) string {
 // rest -- aborted, interrupted -- are the reason anyone is looking.
 func (m Model) outcomeStyle(job model.Job) lipgloss.Style {
 	if job.Outcome == "successful" {
-		return m.magnitudeStyle("free", 1).Bold(true)
+		return m.accentStyle(accentRunning).Bold(true)
 	}
 	return m.style("hi_fg")
 }
@@ -154,20 +154,20 @@ func (m Model) unitState(u model.Unit) string {
 		if u.ActiveState == "failed" {
 			label = "failed"
 		}
-		return m.magnitudeStyle("temp", 1).Bold(true).Render(label)
+		return m.accentStyle(accentFailed).Bold(true).Render(label)
 	case u.Running():
 		// Covers the oneshot case too: systemd holds a oneshot at "activating"
 		// for the whole of its ExecStart, so a backup in flight is never
 		// "active" and would otherwise never be called running.
-		return m.magnitudeStyle("free", 1).Bold(true).Render("running")
+		return m.accentStyle(accentRunning).Bold(true).Render("running")
 	case u.ActiveState == "active":
 		// active/exited: a oneshot with RemainAfterExit=yes. systemd counts it
 		// as active even though nothing is executing.
-		return m.magnitudeStyle("free", 0.4).Bold(true).Render("active")
+		return m.accentStyle(accentActive).Bold(true).Render("active")
 	case u.ActiveState == "deactivating":
-		return m.magnitudeStyle("cpu", 0.5).Bold(true).Render("stopping")
+		return m.accentStyle(accentBusy).Bold(true).Render("stopping")
 	case u.ActiveState == "reloading":
-		return m.magnitudeStyle("cpu", 0.5).Bold(true).Render("reloading")
+		return m.accentStyle(accentBusy).Bold(true).Render("reloading")
 	case u.ActiveState == "":
 		return m.style("inactive_fg").Render("scheduled")
 	default:

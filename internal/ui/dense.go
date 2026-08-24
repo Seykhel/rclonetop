@@ -133,7 +133,7 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 
 	var status []string
 	if p.Drift == 0 && p.Left.Files > 0 {
-		status = append(status, m.magnitudeStyle("free", 1).Bold(true).Render("in sync"))
+		status = append(status, m.accentStyle(accentRunning).Bold(true).Render("in sync"))
 	} else if p.Drift > 0 {
 		status = append(status, m.style("hi_fg").Bold(true).Render(fmt.Sprintf("%d differing", p.Drift)))
 	}
@@ -156,7 +156,7 @@ func (m Model) denseSyncPair(p model.SyncPair, width int) string {
 func (m Model) side(s model.SyncSide) string {
 	return m.value().Render(fmt.Sprint(s.Files)) +
 		m.label().Render(" files ") +
-		m.magnitudeStyle("used", 0.35).Bold(true).Render(Bytes(s.Bytes, m.opts.Base10))
+		m.accentStyle(accentSyncSize).Bold(true).Render(Bytes(s.Bytes, m.opts.Base10))
 }
 
 // denseCaches renders rclone's local cache footprint on a single line.
@@ -175,7 +175,7 @@ func (m Model) denseCaches(caches []model.CacheDir) string {
 	for _, c := range caches {
 		parts = append(parts,
 			m.label().Render(c.Kind+" ")+
-				m.magnitudeStyle("cached", 0.6).Bold(true).Render(Bytes(c.Bytes, m.opts.Base10))+
+				m.accentStyle(accentCacheSize).Bold(true).Render(Bytes(c.Bytes, m.opts.Base10))+
 				m.label().Render(fmt.Sprintf(" (%d files)", c.Files)))
 		if c.ScannedAt.After(scannedAt) {
 			scannedAt = c.ScannedAt
