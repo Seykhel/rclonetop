@@ -258,9 +258,15 @@ The rules that live there:
   `maxInFlight` with the remainder counted, because four rows and no count read as a job with four
   files left in it.
 - **A log file is append-only across runs.** One file holds every run of the job that writes it, so
-  the parser has to notice where one ends and the next begins — bisync's "Synching Path1" line, or
-  the elapsed time going backwards, which is the only marker a `sync` or `copy` gives. Without that
-  this morning's failure is still reported as tonight's state. A statistics block is committed only
+  the parser has to notice where one ends and the next begins. There are **three** markers and the
+  third was found on screen rather than by reading: bisync's "Synching Path1" line; the elapsed time
+  going backwards, which is the only one a `sync` or `copy` gives; and
+  `Failed to create file system`, which rclone writes while opening a remote, before the command it
+  was given runs at all. A run that dies there prints neither of the other two — it never reaches
+  bisync's own code, and it never completes a statistics block — so without the third marker the
+  *previous* run's verdict survives, and a unit that had just failed carried the word "successful"
+  beside its exit code. Without any of them this morning's failure is still reported as tonight's
+  state. A statistics block is committed only
   when its "Elapsed time" line arrives: half a block is not a measurement. The file lists rclone
   writes *after* that line — `Checking:` and then `Transferring:` — belong to the block it has just
   committed, so they are gathered and attached when the list ends rather than reopening it, on the
