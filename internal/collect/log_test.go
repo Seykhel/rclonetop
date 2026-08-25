@@ -1055,7 +1055,7 @@ func TestFilesInFlightAreAttachedToTheBlockTheyFollow(t *testing.T) {
 		"Transferred:          501 / 4667, 11%",
 		"Elapsed time:      5m14.6s",
 		"Transferring:",
-		" * 40-49 Conoscenza/43 Ap…o/Appunti geologia.pdf: 78% / 128.529 MiB, 3.686 MiB/s, 7s",
+		" * 30-39 Reference/31 Pa…s/notes on geology.pdf: 78% / 128.529 MiB, 3.686 MiB/s, 7s",
 		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
 		"",
 	)
@@ -1074,7 +1074,7 @@ func TestFilesInFlightAreAttachedToTheBlockTheyFollow(t *testing.T) {
 	first := tail.job.Transferring[0]
 	// rclone shortened the name itself, before writing it. The ellipsis is
 	// part of what the log says and there is nothing to undo it with.
-	if first.Name != "40-49 Conoscenza/43 Ap…o/Appunti geologia.pdf" {
+	if first.Name != "30-39 Reference/31 Pa…s/notes on geology.pdf" {
 		t.Errorf("name = %q", first.Name)
 	}
 	if first.Percentage != 78 {
@@ -1320,5 +1320,47 @@ func TestFilesInFlightComeOutInAFixedOrder(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "a.bin,big.bin,second.bin" {
 		t.Errorf("order = %v, want it by name", names)
+	}
+}
+
+// A blank line usually ends the roll call, and the tests above lean on it. It
+// is not the only ending: when the next entry arrives first there is no blank
+// line at all, and that line has to both close the list and still be read as
+// whatever it is.
+func TestTheNextEntryClosesTheRollCall(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"2026/08/22 17:45:40 ERROR : one.md: Failed to copy: RootURL not set",
+	)
+
+	if len(tail.job.Transferring) != 1 || tail.job.Transferring[0].Name != "big.bin" {
+		t.Errorf("in flight = %+v, want the list the error line closed", tail.job.Transferring)
+	}
+	// And the line that closed it was not swallowed on the way past.
+	if len(tail.job.Errors) != 1 {
+		t.Errorf("got %d errors, want the one that ended the list: %+v",
+			len(tail.job.Errors), tail.job.Errors)
+	}
+}
+
+// --stats-one-line is the other way nil is reached. rclone writes the whole
+// sample as a single line with no labels and no file list, so there is nothing
+// to parse and nothing to say -- which is not the same as saying that nothing
+// is in flight, and the run reports no statistics either.
+func TestStatsOneLineLeavesTheFileListUnknown(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : 731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"2026/08/22 17:46:33 INFO  : 1.431 GiB / 4.932 GiB, 29%, 12.257 MiB/s, ETA 4m52s",
+	)
+
+	if tail.job.Transferring != nil {
+		t.Errorf("in flight = %+v, want nil: nothing has named a file", tail.job.Transferring)
+	}
+	if tail.job.HaveStats {
+		t.Error("nothing in that form is a complete block either")
 	}
 }

@@ -331,7 +331,7 @@ func TestFilesInFlightAreNamedUnderTheirProcess(t *testing.T) {
 	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
 	m := modelWithJobs([]model.Process{proc}, inFlight(
 		model.Transfer{
-			Name: "40-49 Conoscenza/43 Appunti/geologia.pdf", Percentage: 78,
+			Name: "30-39 Reference/31 Papers/notes on geology.pdf", Percentage: 78,
 			Size: 128 << 20, Speed: 3 << 20, ETA: 7 * time.Second, ETAKnown: true,
 		},
 		model.Transfer{Name: "big.bin", Percentage: 20, Size: 3 << 20},
@@ -340,7 +340,7 @@ func TestFilesInFlightAreNamedUnderTheirProcess(t *testing.T) {
 	got := plainProcess(m, proc, 100)
 
 	for _, want := range []string{
-		"43 Appunti/geologia.pdf", "78% of 128 MiB", "3.0 MiB/s", "ETA 7s",
+		"31 Papers/notes on geology.pdf", "78% of 128 MiB", "3.0 MiB/s", "ETA 7s",
 		"big.bin", "20% of 3.0 MiB",
 	} {
 		if !strings.Contains(got, want) {
