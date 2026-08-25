@@ -1,20 +1,30 @@
 // Package box draws the frame around a btop-style panel.
 //
-// It exists because lipgloss stops one step short. `RoundedBorder()` supplies
-// the six runes and will wrap a block of text in them, but it has nowhere to put
-// a title: btop writes the name of every box *into* its top edge, and that edge
-// then has to come out to exactly the width it was given whatever the name is.
-// Composing it by hand is a dozen lines; bending a border style into doing it is
-// not.
+// It exists because lipgloss stops one step short. Its RoundedBorder() will wrap
+// a block of text in these same six runes, but it has nowhere to put a title:
+// btop writes the name of every box *into* its top edge, and that edge then has
+// to come out to exactly the width it was given whatever the name is. Composing
+// it by hand is a dozen lines; bending a border style into doing it is not.
 //
-// Colour is deliberately absent, on the same terms as internal/ui/graph. The top
-// edge comes back as segments rather than as a finished string so the caller can
-// paint the border, the title and the hotkey in three different colours without
-// parsing them back out of one -- and so that all of the arithmetic here stays
-// testable as plain text.
+// The runes below are copied rather than imported for that reason. Depending on
+// lipgloss for six characters would put this package back inside the thing it is
+// kept outside of: colour is deliberately absent here, on the same terms as
+// internal/ui/graph, which is what keeps all of the arithmetic testable as plain
+// text.
+//
+// The top edge comes back as segments rather than as a finished string so the
+// caller can paint the border, the title and the hotkey in three different
+// colours without parsing them back out of one.
+//
+// What this does not do is compose a row of content. Padding one to Inner()
+// needs the display width of a string that already carries colour, and knowing
+// that is exactly the dependency this package does without.
 package box
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // Runes are the six pieces a frame is drawn from.
 type Runes struct {
@@ -44,6 +54,10 @@ const (
 	KindHotkey
 )
 
+// NoHotkey is the absence of one, named so that a caller does not have to write
+// a bare zero and a reader does not have to guess what it meant.
+const NoHotkey = 0
+
 // Segment is one run of the top edge with one meaning.
 type Segment struct {
 	Text string
@@ -65,11 +79,11 @@ func (b Box) drawable() bool { return b.Width >= 2 && b.Height >= 2 }
 // and its two rows. It never goes negative, so a caller sizing a slice from it
 // does not have to check.
 func (b Box) Inner() (width, height int) {
-	return max0(b.Width - 2), max0(b.Height - 2)
+	return max(b.Width-2, 0), max(b.Height-2, 0)
 }
 
-// Top returns the top edge in pieces, left to right. A hotkey of zero means the
-// box has none.
+// Top returns the top edge in pieces, left to right. NoHotkey means the box has
+// none.
 //
 // The title costs more than its own length: a leading rune so it does not start
 // on the corner, a space either side, and at least one trailing rune so it does
@@ -77,13 +91,13 @@ func (b Box) Inner() (width, height int) {
 // dropped rather than cut -- "ba…" names no box, the frame's own colour already
 // says which one this is, and a truncated word reads as a rendering fault rather
 // than as a narrow terminal.
-func (b Box) Top(hotkey int, title string) []Segment {
+func (b Box) Top(title string, hotkey int) []Segment {
 	if !b.drawable() {
 		return nil
 	}
 
 	key := ""
-	if hotkey != 0 {
+	if hotkey != NoHotkey {
 		key = strconv.Itoa(hotkey)
 	}
 
@@ -98,7 +112,7 @@ func (b Box) Top(hotkey int, title string) []Segment {
 		// The hotkey goes with the title it names: a bare digit labels nothing,
 		// which is worse than an unlabelled box.
 		return []Segment{{Kind: KindBorder, Text: string(b.Runes.TopLeft) +
-			repeat(b.Runes.Horizontal, b.Width-2) + string(b.Runes.TopRight)}}
+			b.rule(b.Width-2) + string(b.Runes.TopRight)}}
 	}
 
 	segs := []Segment{{Kind: KindBorder, Text: string(b.Runes.TopLeft) + string(b.Runes.Horizontal) + " "}}
@@ -110,7 +124,7 @@ func (b Box) Top(hotkey int, title string) []Segment {
 	segs = append(segs,
 		Segment{Kind: KindTitle, Text: title},
 		Segment{Kind: KindBorder, Text: " " +
-			repeat(b.Runes.Horizontal, b.Width-cost+1) + string(b.Runes.TopRight)})
+			b.rule(b.Width-cost+1) + string(b.Runes.TopRight)})
 	return segs
 }
 
@@ -120,23 +134,12 @@ func (b Box) Bottom() string {
 		return ""
 	}
 	return string(b.Runes.BottomLeft) +
-		repeat(b.Runes.Horizontal, b.Width-2) + string(b.Runes.BottomRight)
+		b.rule(b.Width-2) + string(b.Runes.BottomRight)
 }
 
-func repeat(r rune, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	out := make([]rune, n)
-	for i := range out {
-		out[i] = r
-	}
-	return string(out)
-}
-
-func max0(n int) int {
-	if n < 0 {
-		return 0
-	}
-	return n
+// rule is a run of the horizontal rune. Every caller is inside drawable(), which
+// is what makes n safe: the corners account for the only two columns that can
+// take the count below zero.
+func (b Box) rule(n int) string {
+	return strings.Repeat(string(b.Runes.Horizontal), n)
 }

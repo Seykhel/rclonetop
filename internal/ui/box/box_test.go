@@ -20,7 +20,7 @@ func cells(s string) int { return len([]rune(s)) }
 func TestAFrameWithNoTitle(t *testing.T) {
 	b := Box{Width: 10, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top(0, "")), "╭────────╮"; got != want {
+	if got, want := join(b.Top("", 0)), "╭────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 	if got, want := b.Bottom(), "╰────────╯"; got != want {
@@ -36,11 +36,11 @@ func TestAFrameWithNoTitle(t *testing.T) {
 func TestTheTitleSitsInsideTheTopEdge(t *testing.T) {
 	b := Box{Width: 20, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top(0, "files")), "╭─ files ──────────╮"; got != want {
+	if got, want := join(b.Top("files", 0)), "╭─ files ──────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
-	if cells(join(b.Top(0, "files"))) != b.Width {
-		t.Errorf("the edge is not %d cells wide: %q", b.Width, join(b.Top(0, "files")))
+	if cells(join(b.Top("files", 0))) != b.Width {
+		t.Errorf("the edge is not %d cells wide: %q", b.Width, join(b.Top("files", 0)))
 	}
 }
 
@@ -48,7 +48,7 @@ func TestTheTitleSitsInsideTheTopEdge(t *testing.T) {
 func TestTheHotkeyPrecedesTheTitle(t *testing.T) {
 	b := Box{Width: 20, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top(2, "files")), "╭─ 2 files ────────╮"; got != want {
+	if got, want := join(b.Top("files", 2)), "╭─ 2 files ────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 }
@@ -60,7 +60,7 @@ func TestTheSegmentsAreHandedOverSeparately(t *testing.T) {
 	b := Box{Width: 24, Height: 3, Runes: Rounded}
 
 	var got []string
-	for _, s := range b.Top(3, "bandwidth") {
+	for _, s := range b.Top("bandwidth", 3) {
 		got = append(got, kindName(s.Kind)+":"+s.Text)
 	}
 	want := []string{"border:╭─ ", "hotkey:3", "border: ", "title:bandwidth", "border: ────────╮"}
@@ -75,13 +75,13 @@ func TestTheSegmentsAreHandedOverSeparately(t *testing.T) {
 func TestTheASCIIFallbackKeepsTheShape(t *testing.T) {
 	b := Box{Width: 20, Height: 3, Runes: ASCII}
 
-	if got, want := join(b.Top(1, "files")), "+- 1 files --------+"; got != want {
+	if got, want := join(b.Top("files", 1)), "+- 1 files --------+"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 	if got, want := b.Bottom(), "+------------------+"; got != want {
 		t.Errorf("bottom = %q, want %q", got, want)
 	}
-	for _, r := range join(b.Top(1, "files")) + b.Bottom() {
+	for _, r := range join(b.Top("files", 1)) + b.Bottom() {
 		if r > 127 {
 			t.Errorf("a non-ASCII rune %q survived the fallback", r)
 		}
@@ -94,7 +94,7 @@ func TestTheASCIIFallbackKeepsTheShape(t *testing.T) {
 func TestATitleThatDoesNotFitIsDroppedNotCut(t *testing.T) {
 	b := Box{Width: 12, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top(0, "bandwidth")), "╭──────────╮"; got != want {
+	if got, want := join(b.Top("bandwidth", 0)), "╭──────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 	// Three columns wider and it fits, with the single trailing rune that keeps
@@ -102,7 +102,7 @@ func TestATitleThatDoesNotFitIsDroppedNotCut(t *testing.T) {
 	// more for the corners, the leading rune, the two spaces and that trailing
 	// one.
 	wider := Box{Width: 15, Height: 3, Runes: Rounded}
-	if got, want := join(wider.Top(0, "bandwidth")), "╭─ bandwidth ─╮"; got != want {
+	if got, want := join(wider.Top("bandwidth", 0)), "╭─ bandwidth ─╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 }
@@ -112,7 +112,7 @@ func TestATitleThatDoesNotFitIsDroppedNotCut(t *testing.T) {
 func TestTheHotkeyGoesWithTheTitleItNames(t *testing.T) {
 	b := Box{Width: 14, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top(4, "bandwidth")), "╭────────────╮"; got != want {
+	if got, want := join(b.Top("bandwidth", 4)), "╭────────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 }
@@ -141,7 +141,7 @@ func TestABoxTooSmallToFrameDrawsNothing(t *testing.T) {
 		{Width: 0, Height: 0, Runes: Rounded},
 		{Width: -4, Height: 3, Runes: Rounded},
 	} {
-		if got := b.Top(0, "files"); got != nil {
+		if got := b.Top("files", 0); got != nil {
 			t.Errorf("%dx%d gave a top edge: %q", b.Width, b.Height, join(got))
 		}
 		if got := b.Bottom(); got != "" {
@@ -158,12 +158,12 @@ func TestEveryEdgeIsExactlyTheBoxWidth(t *testing.T) {
 	titles := []string{"", "a", "files", "bandwidth", "a title far longer than any box"}
 	for width := 2; width <= 120; width++ {
 		for _, title := range titles {
-			for _, key := range []int{0, 1, 9} {
+			for _, key := range []int{NoHotkey, 1, 9} {
 				for _, runes := range []Runes{Rounded, ASCII} {
 					b := Box{Width: width, Height: 3, Runes: runes}
-					if got := cells(join(b.Top(key, title))); got != width {
+					if got := cells(join(b.Top(title, key))); got != width {
 						t.Fatalf("top at width %d, title %q, key %d: %d cells (%q)",
-							width, title, key, got, join(b.Top(key, title)))
+							width, title, key, got, join(b.Top(title, key)))
 					}
 					if got := cells(b.Bottom()); got != width {
 						t.Fatalf("bottom at width %d: %d cells (%q)", width, got, b.Bottom())

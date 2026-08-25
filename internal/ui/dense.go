@@ -298,12 +298,12 @@ func (m Model) rateScale() float64 {
 // number beside them, so the graph reads as belonging to that number rather
 // than as a second, competing signal.
 //
-// This is the one caller of gradientStyle left, and the only one entitled to be:
-// braille cells are area, which is what btop's ramps were drawn for. Letters go
-// through magnitudeStyle or accentStyle depending on whether their fraction was
-// measured or chosen. A second raw gradientStyle on something made of letters is
-// the regression -- and it would arrive unbold, since those two carry the weight
-// and this one does not.
+// It is one of the two callers of gradientStyle, and both are entitled to be for
+// the same reason: braille cells and meter segments are area, which is what
+// btop's ramps were drawn for. Letters go through magnitudeStyle or accentStyle
+// depending on whether their fraction was measured or chosen. A raw
+// gradientStyle on something made of letters is the regression -- and it would
+// arrive unbold, since those two carry the weight and this one does not.
 func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) string {
 	s := m.graphs.spark(rings, pid, m.opts.GraphSymbol)
 	if s == "" {

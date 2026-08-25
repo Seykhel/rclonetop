@@ -208,7 +208,14 @@ func (m Model) style(key string) lipgloss.Style {
 // against the background, which is true, while a dark glyph reads as nothing at
 // all.
 func (m Model) gradientStyle(ramp string, frac float64) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(m.opts.Theme.Gradient(ramp, frac).Lipgloss())
+	return lipgloss.NewStyle().Foreground(m.gradientColor(ramp, frac).Lipgloss())
+}
+
+// gradientColor is gradientStyle's arithmetic on its own, so an area fill can be
+// asserted on a colour rather than on an escape sequence -- the same split
+// magnitudeColor and accentColor already keep from the styles above them.
+func (m Model) gradientColor(ramp string, frac float64) theme.Color {
+	return m.opts.Theme.Gradient(ramp, frac)
 }
 
 // magnitudeStyle grades text by magnitude without ever painting it in the dark

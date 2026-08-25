@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Seykhel/rclonetop/internal/theme"
+	"github.com/Seykhel/rclonetop/internal/ui/box"
 	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
 
@@ -147,6 +148,24 @@ func TestAMeterWithNoRoomDrawsNothing(t *testing.T) {
 	for _, width := range []int{0, -3} {
 		if got := m.meter("cpu", 0.5, width); got != "" {
 			t.Errorf("width %d gave %q", width, got)
+		}
+	}
+}
+
+// The frame and the bar have to answer the same question the same way, and the
+// answer is the renderer's: box cannot read GraphSymbol without importing a
+// sibling package, and the whole point of it is not to. One place reads the
+// option for both, so a layout author cannot get one right and the other wrong.
+func TestTheFrameDegradesWithTheBar(t *testing.T) {
+	if got := meterModel(graph.TTY).boxRunes(); got != box.ASCII {
+		t.Errorf("tty frame = %+v, want the ASCII runes", got)
+	}
+	for _, sym := range []graph.Symbol{graph.Braille, graph.Block, ""} {
+		if got := meterModel(sym).boxRunes(); got != box.Rounded {
+			t.Errorf("%q frame = %+v, want the rounded runes", sym, got)
+		}
+		if lit, _ := meterGlyphs(sym); lit == '#' {
+			t.Errorf("%q got the ASCII bar", sym)
 		}
 	}
 }
