@@ -1364,3 +1364,56 @@ func TestStatsOneLineLeavesTheFileListUnknown(t *testing.T) {
 		t.Error("nothing in that form is a complete block either")
 	}
 }
+
+// Transcribed from the screen, where it was wrong: a unit line reading
+// "failed · exit 1 · successful", each half true of a different run.
+//
+// The 15:16 timer fired into a sixty-second hole where the wireless link had
+// dropped its DNS, so rclone could not resolve the remote and died before
+// opening it. That run printed neither marker the parser knew -- no
+// "Synching Path1", and no statistics block whose elapsed time could be seen
+// going backwards -- so the 14:50 run's "successful" survived into it.
+func TestAFailureBeforeTheRunStartsIsNotTheLastRunsSuccess(t *testing.T) {
+	tail := feed(
+		"2026/08/25 14:50:48 INFO  : Bisync successful",
+		"2026/08/25 14:50:48 INFO  : ",
+		"Transferred:   \t    4.626 MiB / 4.626 MiB, 100%, 234.201 KiB/s, ETA 0s",
+		"Elapsed time:      4m36.5s",
+		"",
+		`2026/08/25 15:16:45 CRITICAL: Failed to create file system for destination "icloud:Documents": Post "https://p101-drivews.icloud.com:443/retrieveItemDetailsInFolders": dial tcp4: lookup p101-drivews.icloud.com: Temporary failure in name resolution`,
+	)
+
+	if tail.job.Finished || tail.job.Outcome != "" {
+		t.Errorf("outcome = %q (finished %v), want the previous run's verdict gone",
+			tail.job.Outcome, tail.job.Finished)
+	}
+	// And its figures with it: 4.626 MiB moved is what the 14:50 run did, not
+	// what this one did.
+	if tail.job.HaveStats {
+		t.Errorf("statistics survived too: %+v", tail.job.Stats)
+	}
+	// The line that ended the old run is the new run's own first error, and the
+	// only one it has.
+	if len(tail.job.Errors) != 1 {
+		t.Fatalf("got %d errors, want just this run's: %+v", len(tail.job.Errors), tail.job.Errors)
+	}
+	if !strings.Contains(tail.job.Errors[0].Message, "Temporary failure in name resolution") {
+		t.Errorf("kept the wrong error: %q", tail.job.Errors[0].Message)
+	}
+}
+
+// The marker is rclone's, not bisync's: a sync or a copy that cannot open its
+// remote writes the same line, and has even less to mark a run boundary with.
+func TestTheStartupFailureMarkerIsNotBisyncOnly(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"",
+		`2026/08/22 18:15:01 CRITICAL: Failed to create file system for source "/home/user/Documents": directory not found`,
+	)
+
+	if tail.job.HaveStats {
+		t.Errorf("the previous run's progress is still on screen: %+v", tail.job.Stats)
+	}
+}

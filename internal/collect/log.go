@@ -650,6 +650,25 @@ func (t *logTail) narrative(msg string) {
 	}
 
 	switch {
+	case strings.HasPrefix(msg, "Failed to create file system"):
+		// The third marker of a new run, and the one that had to be found the
+		// hard way: on screen, a unit that had just failed carried the word
+		// "successful" beside its exit code, each true of a different run.
+		//
+		// rclone writes this while opening the remotes, before the command it
+		// was given has run at all -- so a run that dies here has done nothing,
+		// and prints neither of the other two markers: it never reaches the
+		// bisync code that writes "Synching Path1", and it never completes a
+		// statistics block whose elapsed time could be seen going backwards.
+		// The previous run's verdict would otherwise stand for ever, and a
+		// backup that says "successful" when it did not run is the one lie this
+		// program exists to prevent.
+		//
+		// It clears the errors with everything else, and the very line that
+		// triggered it is recorded a moment later by recordError -- so the new
+		// run starts with exactly its own first error and none of the old ones.
+		t.newRun()
+
 	case msg == "Bisync successful":
 		t.finish("successful")
 	case strings.HasPrefix(msg, "Bisync aborted"):
