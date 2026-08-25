@@ -99,9 +99,23 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 					s.Transfers, s.TotalTransfers, s.Checks, s.TotalChecks,
 					s.Errors, s.FatalError)
 				fmt.Fprintf(w, "      speed %s  elapsed %s  eta %s\n",
-					ui.Rate(s.Speed, base10), ui.Duration(s.Elapsed), eta(s))
+					ui.Rate(s.Speed, base10), ui.Duration(s.Elapsed), eta(s.ETA, s.ETAKnown))
 			} else {
 				fmt.Fprintln(w, "      no statistics block read yet")
+			}
+			// Nil and empty are different answers here: "no block has named the
+			// files" against "the block named none", and only the second says
+			// the run is between files rather than unobserved.
+			switch {
+			case j.Transferring == nil:
+				fmt.Fprintln(w, "      files in flight not reported by this log")
+			case len(j.Transferring) == 0:
+				fmt.Fprintln(w, "      no file in flight")
+			}
+			for _, t := range j.Transferring {
+				fmt.Fprintf(w, "      → %s  %s of %s  %s  eta %s\n",
+					t.Name, transferDone(t, base10), transferSize(t.Size, base10),
+					ui.Rate(t.Speed, base10), eta(t.ETA, t.ETAKnown))
 			}
 			fmt.Fprintf(w, "      last line %s  outcome %q (finished %v)\n",
 				stamp(j.At), j.Outcome, j.Finished)
@@ -221,11 +235,31 @@ func profileName(p termenv.Profile) string {
 
 // eta formats an estimate, keeping "rclone cannot say" distinct from "no time
 // left at all".
-func eta(s model.JobStats) string {
-	if !s.ETAKnown {
+func eta(d time.Duration, known bool) string {
+	if !known {
 		return "unknown"
 	}
-	return ui.Duration(s.ETA)
+	return ui.Duration(d)
+}
+
+// transferSize formats a file's total size, which rclone records as -1 when it
+// could not learn it before starting. Printing that as a byte count would say
+// the file is a negative size; printing it as zero would say it is empty.
+func transferSize(size int64, base10 bool) string {
+	if size < 0 {
+		return "unknown size"
+	}
+	return ui.Bytes(uint64(size), base10)
+}
+
+// transferDone formats how much of a file has moved. The text log form gives
+// the percentage and nothing else, so there is a byte count to print only when
+// the log was written as JSON.
+func transferDone(t model.Transfer, base10 bool) string {
+	if !t.BytesKnown {
+		return fmt.Sprintf("%d%%", t.Percentage)
+	}
+	return fmt.Sprintf("%d%% (%s)", t.Percentage, ui.Bytes(t.Bytes, base10))
 }
 
 // stamp formats a timestamp for the dump, distinguishing "never" from a real

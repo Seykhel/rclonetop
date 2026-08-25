@@ -376,6 +376,14 @@ type logTail struct {
 	// as long as it took the rest to arrive.
 	pending *model.JobStats
 
+	// lists is set while the tail is inside the roll call of file names rclone
+	// writes after the figures of a block, and inTransferring while that roll
+	// call is the "Transferring:" one rather than the "Checking:" one before it.
+	// inflight is what has been read out of it so far. See fileLists.
+	lists          bool
+	inTransferring bool
+	inflight       []model.Transfer
+
 	// at is the timestamp of the last header line seen, carried across the
 	// continuation lines that follow it and have none of their own.
 	at time.Time
@@ -427,6 +435,26 @@ type jsonStats struct {
 	// and a nil pointer is the only way to tell that apart from an estimate of
 	// zero seconds, which means the opposite.
 	ETA *float64 `json:"eta"`
+
+	// Transferring is the per-file detail the text block spells out under
+	// "Transferring:", except that the names have not been shortened to fit a
+	// column and the byte counts are exact. It is absent from an entry that
+	// carries no statistics, and empty between two files.
+	Transferring []jsonTransfer `json:"transferring"`
+}
+
+// jsonTransfer is one file in flight as the stats object describes it.
+//
+// The fields left out are the ones this monitor cannot use: srcFs and dstFs
+// name the two ends, which the job already knows, and group names rclone's own
+// accounting bucket.
+type jsonTransfer struct {
+	Name       string   `json:"name"`
+	Bytes      uint64   `json:"bytes"`
+	Size       int64    `json:"size"`
+	Percentage int      `json:"percentage"`
+	Speed      float64  `json:"speed"`
+	ETA        *float64 `json:"eta"`
 }
 
 // consume parses one line of the log.
@@ -501,6 +529,11 @@ func (t *logTail) consumeJSON(line string) bool {
 
 	if e.Stats != nil {
 		t.commit(e.Stats.model())
+		// After the commit, because commit is what notices a new run and clears
+		// what belonged to the previous one. The list is attached rather than
+		// folded into JobStats for the same reason it is in the text form: it
+		// describes the sample, it is not part of it.
+		t.job.Transferring = e.Stats.transfers()
 	}
 	return true
 }
@@ -525,6 +558,31 @@ func (s jsonStats) model() model.JobStats {
 		stats.ETA, stats.ETAKnown = time.Duration(*s.ETA*float64(time.Second)), true
 	}
 	return stats
+}
+
+// transfers converts the files in flight.
+//
+// The result is empty rather than nil even when the array is missing: an entry
+// that carries a statistics object has been read, and "the object listed no
+// file" is a measurement. Only a job no block has been read for at all has
+// nothing to say.
+func (s jsonStats) transfers() []model.Transfer {
+	out := make([]model.Transfer, 0, len(s.Transferring))
+	for _, t := range s.Transferring {
+		m := model.Transfer{
+			Name:       t.Name,
+			Percentage: t.Percentage,
+			Bytes:      t.Bytes,
+			BytesKnown: true,
+			Size:       t.Size,
+			Speed:      t.Speed,
+		}
+		if t.ETA != nil {
+			m.ETA, m.ETAKnown = time.Duration(*t.ETA*float64(time.Second)), true
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // bisyncPaths matches the two lines that write a pair's operands out in full.
@@ -581,6 +639,12 @@ func (t *logTail) commit(stats model.JobStats) {
 func (t *logTail) finish(outcome string) {
 	t.job.Outcome = outcome
 	t.job.Finished = true
+	// Empty rather than left alone: whatever the last block said was moving, a
+	// run that has ended is moving nothing. A sync or a copy clears the list by
+	// writing a final block that names no file, but bisync says how it went in
+	// words and may write nothing after them.
+	t.job.Transferring = []model.Transfer{}
+	t.lists, t.inTransferring, t.inflight = false, false, nil
 }
 
 // newRun resets what belonged to the previous run in the same file.
@@ -595,6 +659,10 @@ func (t *logTail) newRun() {
 	t.job.HaveStats = false
 	t.job.Stats = model.JobStats{}
 	t.pending = nil
+	// Nil rather than empty: the new run has not said what it is moving yet,
+	// which is not the same as its having said "nothing".
+	t.job.Transferring = nil
+	t.lists, t.inTransferring, t.inflight = false, false, nil
 }
 
 // recordError keeps the lines worth showing: rclone has no WARNING level, so
@@ -670,6 +738,12 @@ func parsePlainHeader(line string) (at time.Time, level, msg string, ok bool) {
 // time: bytes on the first, files on the second. They are told apart by whether
 // the two operands carry units.
 func (t *logTail) statsLine(msg string) {
+	// The roll call of file names comes after the figures, and after the line
+	// that has already committed them. A line it claims is not a stats line.
+	if t.lists && t.fileLists(msg) {
+		return
+	}
+
 	label, rest, ok := strings.Cut(msg, ":")
 	if !ok {
 		return
@@ -746,7 +820,106 @@ func (t *logTail) statsLine(msg string) {
 		}
 		// The block is complete, so it becomes the sample.
 		t.commit(*t.pending)
+		// And whatever follows names the files it was measuring.
+		t.lists, t.inTransferring, t.inflight = true, false, nil
 	}
+}
+
+// fileLists reads the lines rclone writes after the figures of a statistics
+// block, and reports whether it took the line.
+//
+// The block ends at "Elapsed time", which has already committed it. What comes
+// next is the roll call of what was in flight at that moment:
+//
+//	Elapsed time:         0.3s
+//	Checking:
+//	 *                                       notes.md: checking
+//	Transferring:
+//	 *                                        big.bin: 20% / 2.861 MiB, 0 B/s, -
+//
+// These belong to the sample just committed, so they are gathered here and
+// attached when the roll call ends rather than reopening the block -- half a
+// list is no more a measurement than half a block, and the two would otherwise
+// commit as one mixed sample. What ends it is a blank line normally, and the
+// first line of the next entry if rclone wrote none; either way the line falls
+// through to be read as whatever else it is.
+//
+// The "Checking:" list is read past rather than kept. Those files are being
+// compared, not moved, and rclone gives no figures for them.
+func (t *logTail) fileLists(msg string) bool {
+	switch trimmed := strings.TrimSpace(msg); {
+	case trimmed == "Transferring:":
+		t.inTransferring = true
+		if t.inflight == nil {
+			t.inflight = []model.Transfer{}
+		}
+		return true
+
+	case trimmed == "Checking:":
+		t.inTransferring = false
+		return true
+
+	case strings.HasPrefix(trimmed, "* "):
+		if t.inTransferring {
+			if tr, ok := parseTransferLine(trimmed); ok {
+				t.inflight = append(t.inflight, tr)
+			}
+		}
+		return true
+	}
+
+	// Over. A block that named no file still said something: nothing is in
+	// flight, which is what a run between two files looks like, and leaving the
+	// last list up instead would report files that finished minutes ago.
+	t.job.Transferring = t.inflight
+	if t.job.Transferring == nil {
+		t.job.Transferring = []model.Transfer{}
+	}
+	t.lists, t.inTransferring, t.inflight = false, false, nil
+	return false
+}
+
+// transferLine matches one file's line under "Transferring:", already trimmed
+// of the space around it.
+//
+// rclone right-aligns the name in a column of its own -- 45 characters, unless
+// --stats-file-name-length says otherwise -- so the run of spaces after the
+// star is padding and not part of the name.
+//
+// The name is matched greedily so that the *last* colon on the line is the
+// separator: a file name may contain one and the figures after it may not.
+var transferLine = regexp.MustCompile(`^\*\s+(.+):\s*(\d+)%\s*/\s*([^,]+),\s*([^,]+),\s*(\S+)\s*$`)
+
+// parseTransferLine reads one file in flight out of a text log.
+//
+// A line that does not match is not a failure: rclone writes " * name: checking"
+// for a file it has queued and not begun, and a name with no figures beside it
+// is not a measurement of anything.
+func parseTransferLine(line string) (model.Transfer, bool) {
+	m := transferLine.FindStringSubmatch(line)
+	if m == nil {
+		return model.Transfer{}, false
+	}
+	pct, err := strconv.Atoi(m[2])
+	if err != nil {
+		return model.Transfer{}, false
+	}
+
+	// Bytes is left unknown on purpose. The line gives the percentage and the
+	// total and no third figure, and multiplying a total by a percentage
+	// rounded to a whole number would invent a byte count rclone never wrote.
+	t := model.Transfer{Name: m[1], Percentage: pct, Size: -1}
+
+	if size, ok := parseLogSize(m[3]); ok {
+		t.Size = int64(size)
+	}
+	if speed, ok := parseLogSize(strings.TrimSuffix(m[4], "/s")); ok {
+		t.Speed = float64(speed)
+	}
+	if eta, ok := parseLogDuration(m[5]); ok {
+		t.ETA, t.ETAKnown = eta, true
+	}
+	return t, true
 }
 
 // splitProgress separates the "done / total" operands that open a progress
