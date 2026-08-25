@@ -6,13 +6,6 @@ import (
 	"github.com/Seykhel/rclonetop/internal/theme"
 )
 
-// luminance is Rec. 709 relative brightness, which is what decides whether text
-// can be read against a dark background. Plain channel averages would call
-// #4f43a3 and #43a34f equally legible, and the eye does not.
-func luminance(c theme.Color) float64 {
-	return 0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)
-}
-
 func themes() map[string]*theme.Theme {
 	return map[string]*theme.Theme{"default": theme.Default(), "tty": theme.TTY()}
 }
@@ -180,5 +173,63 @@ func TestWeightIsBuiltIntoTheColouredStyles(t *testing.T) {
 	// cell has no glyph shape to thicken, only a colour.
 	if m.gradientStyle("download", 0.75).GetBold() {
 		t.Error("gradientStyle is bold; it fills area, where weight means nothing")
+	}
+}
+
+// A meter's cell is not against the background, it is against meter_bg, and the
+// cold end of most ramps is darker than that. A bar at four per cent showed a
+// hole rather than a mark: the failure the text rule exists to prevent, arrived
+// from the other side.
+func TestEveryFilledCellClearsTheTrack(t *testing.T) {
+	// The tty palette is exempt for the reason the accent test exempts it:
+	// eight saturated colours whose Rec. 709 luminance lies about them. That
+	// mode tells the two halves apart by shape instead.
+	th := theme.Default()
+	m := New(nil, Options{Theme: th}, nil)
+	want := luminance(th.Color("meter_bg")) + meterFloor
+
+	for _, ramp := range theme.GradientNames {
+		for _, at := range []float64{0, 0.05, 0.2, 0.5, 0.8, 1} {
+			if got := luminance(m.meterColor(ramp, at)); got < want {
+				t.Errorf("%s at %.2f has luminance %.0f, below the track's floor of %.0f",
+					ramp, at, got, want)
+			}
+		}
+	}
+}
+
+func TestTheRampsColdEndReallyIsLostAgainstTheTrack(t *testing.T) {
+	// The premise the test above is the cure for, pinned so the cure cannot be
+	// "simplified" back into a plain gradientColor call with everything else
+	// still green. Five of the seven ramps start below the track; these two are
+	// the worst, and they are the ones a bandwidth meter would use.
+	th := theme.Default()
+	track := luminance(th.Color("meter_bg"))
+
+	for _, ramp := range []string{"download", "upload"} {
+		if got := luminance(th.Gradient(ramp, 0)); got >= track {
+			t.Errorf("%s_start has luminance %.0f, already at or above the track's %.0f: "+
+				"either the theme changed or this no longer measures anything", ramp, got, track)
+		}
+	}
+}
+
+// And the lift is paid for only where it is needed: a ramp that was already
+// clear of the track keeps its own colours, the hot end included, or the bar
+// stops saying anything about magnitude.
+func TestTheLiftLeavesALegibleRampAlone(t *testing.T) {
+	th := theme.Default()
+	m := New(nil, Options{Theme: th}, nil)
+
+	for _, ramp := range theme.GradientNames {
+		if got, want := m.meterColor(ramp, 1), th.Gradient(ramp, 1); got != want {
+			t.Errorf("%s at one = %+v, want the ramp's own end %+v", ramp, got, want)
+		}
+	}
+	// cpu starts bright and needs no help anywhere.
+	for _, at := range []float64{0, 0.5, 1} {
+		if got, want := m.meterColor("cpu", at), th.Gradient("cpu", at); got != want {
+			t.Errorf("cpu at %.1f was lifted from %+v to %+v for no reason", at, want, got)
+		}
 	}
 }

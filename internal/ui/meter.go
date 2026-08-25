@@ -4,6 +4,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/Seykhel/rclonetop/internal/theme"
 	"github.com/Seykhel/rclonetop/internal/ui/box"
 	"github.com/Seykhel/rclonetop/internal/ui/graph"
@@ -12,11 +14,10 @@ import (
 // meter draws btop's gradient bar: a fixed-width track with the leading part of
 // it filled along a ramp.
 //
-// It goes through gradientStyle, which is the second and last thing entitled to,
-// for the reason the colour rule gives: a meter is **area**. A dark cell against
-// a dark background honestly reads as "not much", which is exactly what the cold
-// end of a btop ramp is there to say -- the failure that rule exists to prevent
-// is a dark *glyph*, which reads as nothing at all.
+// A meter is **area**, so its fill indexes a ramp rather than blending one, which
+// is what the colour rule allows area to do. It goes one step further than the
+// sparkline does, through meterStyle, because area against a *track* is not the
+// same problem as area against the background -- see there.
 //
 // The gradient runs across the bar rather than with the value, which is btop's
 // own arrangement and the one that carries information: a cell's colour says
@@ -42,7 +43,7 @@ func (m Model) meter(ramp string, frac float64, width int) string {
 	b.Grow(width * 8)
 	for i := 0; i < width; i++ {
 		if i < filled {
-			b.WriteString(m.gradientStyle(ramp, meterPoint(i, width)).Render(string(lit)))
+			b.WriteString(m.meterStyle(ramp, meterPoint(i, width)).Render(string(lit)))
 			continue
 		}
 		// The unfilled part is a track, not a colder reading: meter_bg exactly,
@@ -67,9 +68,72 @@ func (m Model) meterColors(ramp string, frac float64, width int) []theme.Color {
 			colors[i] = m.opts.Theme.Color("meter_bg")
 			continue
 		}
-		colors[i] = m.gradientColor(ramp, meterPoint(i, width))
+		colors[i] = m.meterColor(ramp, meterPoint(i, width))
 	}
 	return colors
+}
+
+// meterFloor is how far above the track a filled cell has to sit, in Rec. 709
+// luminance. Roughly a tenth of the full range: the smallest step that reads as
+// a different colour rather than as a rendering artefact.
+const meterFloor = 24
+
+// meterStyle paints one filled cell. It is the meter's gradientStyle, and it
+// exists because gradientStyle alone is not enough here.
+//
+// The colour rule says a ramp may be indexed raw to fill area, on the grounds
+// that a dark cell against a dark background honestly reads as "not much". True,
+// and load-bearing for the sparkline -- but a meter's cell is not against the
+// background. It is against meter_bg, a *lighter* dark, and against that the
+// cold end of five of the seven ramps is darker than the track it sits in. At
+// four per cent the bar did not show a mark, it showed a hole: exactly the
+// failure the text rule exists to prevent, arrived from the other side.
+//
+// So: indexed raw, then lifted if it does not clear the track. Only the cells
+// that fail are touched, and each by the least that works, so the ramp keeps its
+// own colours everywhere it was already legible -- the hot end included.
+func (m Model) meterStyle(ramp string, at float64) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(m.meterColor(ramp, at).Lipgloss())
+}
+
+// meterColor is meterStyle's arithmetic on its own, so the property that matters
+// can be asserted on a colour rather than on an escape sequence.
+//
+// The lift is towards the ramp's own hot end rather than towards main_fg,
+// because a download cell has to stay recognisably a download cell; blending to
+// grey would buy visibility by throwing away what the colour was saying.
+// Luminance is linear under Blend, so the smallest sufficient blend is solved
+// rather than searched for.
+func (m Model) meterColor(ramp string, at float64) theme.Color {
+	c := m.gradientColor(ramp, at)
+	want := luminance(m.opts.Theme.Color("meter_bg")) + meterFloor
+	have := luminance(c)
+	if have >= want {
+		return c
+	}
+
+	hot := m.gradientColor(ramp, 1)
+	if luminance(hot) <= have {
+		// A ramp whose hot end is no brighter than this cell -- cpu runs green
+		// to red and loses luminance doing it. There is nothing to lift towards,
+		// and such a ramp is bright at the cold end anyway, so it never gets
+		// here in the built-in themes.
+		return c
+	}
+
+	// Aimed one unit above the floor, because Blend rounds each channel to a
+	// byte and the exact solution can land a fraction short of what it solved
+	// for. One unit of luminance is the most a single channel's rounding can
+	// cost, so this cannot undershoot.
+	t := (want + 1 - have) / (luminance(hot) - have)
+	if t > 1 {
+		// The whole ramp is darker than the track wants. Best effort, and the
+		// tty palette is where this happens: eight saturated colours whose
+		// luminance lies about them, which is why that mode tells the two halves
+		// apart by shape as well.
+		t = 1
+	}
+	return theme.Blend(c, hot, t)
 }
 
 // meterFill is how many cells of width are lit at frac.

@@ -218,6 +218,17 @@ func (m Model) gradientColor(ramp string, frac float64) theme.Color {
 	return m.opts.Theme.Gradient(ramp, frac)
 }
 
+// luminance is Rec. 709 relative brightness, which is what decides whether one
+// colour can be read against another. Plain channel averages would call #4f43a3
+// and #43a34f equally legible, and the eye does not.
+//
+// It is a poor proxy for a saturated primary -- it scores #ff0000 at 54 -- which
+// is why every rule built on it exempts the tty palette, eight saturated colours
+// where the number lies.
+func luminance(c theme.Color) float64 {
+	return 0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)
+}
+
 // magnitudeStyle grades text by magnitude without ever painting it in the dark
 // end of a ramp.
 //
