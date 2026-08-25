@@ -922,3 +922,247 @@ func TestAUnitAndItsProcessDoNotDouble(t *testing.T) {
 		t.Errorf("pid = %d, want 42", got)
 	}
 }
+
+// The "Transferring:" block is the only per-file detail any collector can
+// produce, and it arrives *after* the "Elapsed time" line that has already
+// committed the sample it belongs to.
+//
+// The lines below are the text form as rclone writes it: the name right-aligned
+// in a column of its own, the percentage, the file's total size, its rate and
+// its estimate.
+func TestFilesInFlightAreAttachedToTheBlockTheyFollow(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Checks:              9354 / 9354, 100%, Listed 11370",
+		"Transferred:          501 / 4667, 11%",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" * 40-49 Conoscenza/43 Ap…o/Appunti geologia.pdf: 78% / 128.529 MiB, 3.686 MiB/s, 7s",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+	)
+
+	// The list must not have reopened the block: these are the figures the
+	// "Elapsed time" line committed, and a second commit would have discarded
+	// them.
+	if !tail.job.HaveStats || tail.job.Stats.Bytes != 766703042 {
+		t.Fatalf("the committed sample was disturbed: %+v", tail.job.Stats)
+	}
+
+	if len(tail.job.Transferring) != 2 {
+		t.Fatalf("got %d files in flight, want 2: %+v", len(tail.job.Transferring), tail.job.Transferring)
+	}
+
+	first := tail.job.Transferring[0]
+	// rclone shortened the name itself, before writing it. The ellipsis is
+	// part of what the log says and there is nothing to undo it with.
+	if first.Name != "40-49 Conoscenza/43 Ap…o/Appunti geologia.pdf" {
+		t.Errorf("name = %q", first.Name)
+	}
+	if first.Percentage != 78 {
+		t.Errorf("percentage = %d, want 78", first.Percentage)
+	}
+	if first.BytesKnown {
+		t.Error("the text form gives no byte count; claiming one invents it")
+	}
+	// 128.529 x 2^20 = 134772424, and 3.686 x 2^20 = 3865051.
+	if !about(float64(first.Size), 134772424) {
+		t.Errorf("size = %d, want about 134772424", first.Size)
+	}
+	if !about(first.Speed, 3865051) {
+		t.Errorf("speed = %f, want about 3865051", first.Speed)
+	}
+	if first.ETA != 7*time.Second || !first.ETAKnown {
+		t.Errorf("eta = %s (known %v), want 7s", first.ETA, first.ETAKnown)
+	}
+
+	second := tail.job.Transferring[1]
+	if second.Name != "big.bin" {
+		t.Errorf("name = %q, want the padding gone", second.Name)
+	}
+	// A dash is rclone saying it cannot estimate, which is not an estimate of
+	// no time left.
+	if second.ETAKnown {
+		t.Error("the estimate is a dash")
+	}
+	// And a rate of zero is a rate rclone measured, unlike the byte count.
+	if second.Speed != 0 {
+		t.Errorf("speed = %f, want 0", second.Speed)
+	}
+}
+
+// The object beside a JSON entry carries the same list with the names whole and
+// the byte counts exact, which is the same argument that decides the totals.
+func TestJSONFilesInFlightAreRead(t *testing.T) {
+	tail := feed(jsonStatsLine)
+
+	if len(tail.job.Transferring) != 1 {
+		t.Fatalf("got %d files in flight, want 1: %+v", len(tail.job.Transferring), tail.job.Transferring)
+	}
+	f := tail.job.Transferring[0]
+	if f.Name != "big.bin" {
+		t.Errorf("name = %q", f.Name)
+	}
+	if !f.BytesKnown || f.Bytes != 618496 {
+		t.Errorf("bytes = %d (known %v), want the object's exact 618496", f.Bytes, f.BytesKnown)
+	}
+	if f.Size != 3000000 {
+		t.Errorf("size = %d, want 3000000", f.Size)
+	}
+	if f.Percentage != 20 {
+		t.Errorf("percentage = %d, want 20", f.Percentage)
+	}
+	// The object's "speed" is this file's average over its own life. The text
+	// beside it says "0 B/s", which is the moving average that has not had
+	// time to move yet, and reporting that for a file plainly transferring is
+	// the same mistake as reporting a missing measurement as zero.
+	if !about(f.Speed, 2065831.93) {
+		t.Errorf("speed = %f, want the object's 2065831.93 rather than the text's 0", f.Speed)
+	}
+	if f.ETAKnown {
+		t.Error("the entry's eta is null, which is not an estimate of zero")
+	}
+}
+
+// Between two files rclone writes a block with no "Transferring:" section at
+// all. That is a measurement -- nothing is moving -- and leaving the previous
+// list up would report a file that finished minutes ago as still going.
+func TestABlockNamingNoFileClearsTheLastOne(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		"2026/08/22 17:46:33 INFO  : ",
+		"Transferred:   \t    1.431 GiB / 4.932 GiB, 29%, 12.257 MiB/s, ETA 4m52s",
+		"Elapsed time:      6m14.6s",
+		"",
+	)
+
+	if tail.job.Transferring == nil {
+		t.Fatal("a block was read; nil says none has been")
+	}
+	if len(tail.job.Transferring) != 0 {
+		t.Errorf("still in flight after a block that named nothing: %+v", tail.job.Transferring)
+	}
+}
+
+// "Checking:" comes first and looks the same. Those files are being compared
+// rather than moved, and rclone gives no figures for them.
+func TestFilesBeingCheckedAreNotInFlight(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Checking:",
+		" *                                      notes.md: checking",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		// A file rclone has queued and not begun. It has a name and no
+		// measurement, which is not enough to report as progress.
+		" *                                    second.bin: checking",
+		"",
+	)
+
+	if len(tail.job.Transferring) != 1 {
+		t.Fatalf("got %d files in flight, want only big.bin: %+v",
+			len(tail.job.Transferring), tail.job.Transferring)
+	}
+	if tail.job.Transferring[0].Name != "big.bin" {
+		t.Errorf("name = %q", tail.job.Transferring[0].Name)
+	}
+}
+
+// Half a list is no more a measurement than half a block. A tail whose read
+// ended between the header and the blank line has to hold what it had.
+func TestAHalfReadListIsNotCommitted(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		"2026/08/22 17:46:33 INFO  : ",
+		"Transferred:   \t    1.431 GiB / 4.932 GiB, 29%, 12.257 MiB/s, ETA 4m52s",
+		"Elapsed time:      6m14.6s",
+		"Transferring:",
+		// ... and the read ends here, mid-list.
+	)
+
+	if len(tail.job.Transferring) != 1 || tail.job.Transferring[0].Name != "big.bin" {
+		t.Errorf("in flight = %+v, want the last complete list", tail.job.Transferring)
+	}
+}
+
+// Nothing has been read: not "nothing is moving", which is a different answer
+// and the one a run between files gives.
+func TestNoStatsBlockLeavesFilesInFlightUnknown(t *testing.T) {
+	tail := feed("2026/08/22 23:52:22 INFO  : Building Path1 and Path2 listings")
+
+	if tail.job.Transferring != nil {
+		t.Errorf("in flight = %+v, want nil until a block says", tail.job.Transferring)
+	}
+}
+
+// A run that has ended is moving nothing, whatever the last block said. bisync
+// announces the end in words and may write no further block to clear it.
+func TestAFinishedRunHasNothingInFlight(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		"2026/08/22 17:46:00 INFO  : Bisync successful",
+	)
+
+	if tail.job.Transferring == nil || len(tail.job.Transferring) != 0 {
+		t.Errorf("in flight = %+v, want an empty list", tail.job.Transferring)
+	}
+}
+
+// And a new run in the same file starts with nothing said about it, rather than
+// with the previous run's last word.
+func TestANewRunForgetsWhatWasInFlight(t *testing.T) {
+	tail := feed(
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		`2026/08/23 02:00:01 INFO  : Synching Path1 "/home/user/Documents/" with Path2 "gdrive:Documents/"`,
+	)
+
+	if tail.job.Transferring != nil {
+		t.Errorf("in flight = %+v, want nil: the new run has not said yet", tail.job.Transferring)
+	}
+}
+
+// rclone records -1 for a source it could not size before starting. Zero is a
+// real answer -- an empty file -- so it cannot stand in for that one.
+func TestAnUnknownFileSizeIsNotZero(t *testing.T) {
+	tail := feed(`{"time":"2026-08-23T15:25:58.436819465+02:00","level":"notice","msg":"stats","stats":{"bytes":1,"elapsedTime":1,"transferring":[{"bytes":40000,"eta":null,"name":"stream.bin","percentage":0,"size":-1,"speed":1000}]}}`)
+
+	if len(tail.job.Transferring) != 1 {
+		t.Fatalf("got %d files in flight, want 1", len(tail.job.Transferring))
+	}
+	if got := tail.job.Transferring[0].Size; got != -1 {
+		t.Errorf("size = %d, want -1", got)
+	}
+}
+
+// about compares figures the log rounded before writing them, which no exact
+// comparison can survive.
+func about(got, want float64) bool {
+	diff := got - want
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= 1
+}

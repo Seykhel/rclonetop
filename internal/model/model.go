@@ -229,6 +229,57 @@ func (s JobStats) Done() (float64, bool) {
 	return float64(s.Bytes) / float64(s.TotalBytes), true
 }
 
+// Transfer is one file rclone has in flight: what it is, how far through it is,
+// and how fast it is going.
+//
+// Nothing but the log can produce this. /proc measures the whole process and
+// knows nothing of files, systemd only has the result, and the bisync listings
+// describe the last run rather than this instant -- so a screen that says *what*
+// is moving, rather than only how much, has this and nothing else.
+type Transfer struct {
+	// Name is the file's path within the transfer, as rclone names it.
+	//
+	// From a text log it may have had its middle replaced by an ellipsis:
+	// rclone shortens the name to fit its own column before writing it, and
+	// that cannot be undone. It is one more reason to prefer a JSON log, where
+	// the name arrives whole.
+	Name string
+
+	// Percentage is how far through this file rclone says it is, 0 to 100. It
+	// is the one progress figure both log formats carry, and the only one the
+	// text form carries at all.
+	Percentage int
+
+	// Bytes is how much of the file has moved, and BytesKnown is false for a
+	// text log. That form prints the percentage and the total and leaves the
+	// third figure out; deriving it from a percentage rounded to a whole number
+	// would invent a measurement rclone never made.
+	Bytes      uint64
+	BytesKnown bool
+
+	// Size is the file's total size, or -1 when rclone does not know it -- what
+	// it records for a source that cannot be sized before the transfer starts.
+	// Zero is a real answer, an empty file, so it cannot stand for this one.
+	Size int64
+
+	// Speed is this file's own rate in bytes per second, which is a different
+	// quantity from JobStats.Speed: that one averages the whole run.
+	//
+	// The two formats do not measure it the same way. The JSON object's "speed"
+	// is the file's average over its own life; the text line prints rclone's
+	// moving average, the "speedAvg" beside it in the object, which reads zero
+	// for the first seconds of every transfer. Where both are present the
+	// average is taken, on the same grounds as everywhere else here: a zero and
+	// "too early to say" mean opposite things.
+	Speed float64
+
+	// ETA is only meaningful when ETAKnown is set, for the same reason as
+	// JobStats.ETA: rclone writes "-" in the text and null in the object
+	// whenever it cannot estimate, and a zero there would read as "done".
+	ETA      time.Duration
+	ETAKnown bool
+}
+
 // Job is one rclone run as described by the log it is writing.
 //
 // The log is the only source that reports progress against a known total while
@@ -251,6 +302,15 @@ type Job struct {
 
 	Stats     JobStats
 	HaveStats bool
+
+	// Transferring are the files in flight when the last statistics block was
+	// written. Nil means nothing has said -- no block has been read yet, or the
+	// run was started with --stats-one-line, which prints no file list at all --
+	// and empty means a block was read and named none, which is what a run
+	// between two files honestly looks like. The distinction is the same one
+	// State.Apply keeps for a collector's slices, and for the same reason: only
+	// the second should clear what is on screen.
+	Transferring []Transfer
 
 	// At is the timestamp of the last line parsed, not the time it was read.
 	// A log that has stopped moving says so by this standing still.

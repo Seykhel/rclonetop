@@ -251,7 +251,12 @@ The rules that live there:
   the parser has to notice where one ends and the next begins — bisync's "Synching Path1" line, or
   the elapsed time going backwards, which is the only marker a `sync` or `copy` gives. Without that
   this morning's failure is still reported as tonight's state. A statistics block is committed only
-  when its "Elapsed time" line arrives: half a block is not a measurement.
+  when its "Elapsed time" line arrives: half a block is not a measurement. The file lists rclone
+  writes *after* that line — `Checking:` and then `Transferring:` — belong to the block it has just
+  committed, so they are gathered and attached when the list ends rather than reopening it, on the
+  same grounds: half a list is not a measurement either. `Job.Transferring` keeps the same
+  nil-versus-empty distinction as the rest of the state, and the two are both reachable — nil is a
+  run under `--stats-one-line`, empty is a run between two files.
 - **systemd units are not simple.** A `Type=oneshot` sits at `activating` for its whole run and
   `inactive` afterwards whether it succeeded or not — hence `Unit.Running`, `Active`, `Failed` and
   `LastRun`. `ExitStatus` is an exit code only when `ExitCode` is `1` (CLD_EXITED); with `2` the same
