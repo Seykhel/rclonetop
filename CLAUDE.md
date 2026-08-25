@@ -141,16 +141,28 @@ zero end of a btop ramp is unreadable.
   cyan". Indexed raw, because blending only dilutes a colour somebody already picked for being
   legible. An accent not listed in `textAccents` escapes the legibility test, which is the one way to
   get an unreadable one past the suite.
-- `Model.gradientStyle(ramp, frac)` — raw, and reached for directly only to fill **area**: the
-  sparkline, and meters when they exist. A dark *cell* against a dark background honestly reads as
-  "not much"; a dark glyph reads as nothing at all.
+- `Model.gradientStyle(ramp, frac)` — raw, and reached for directly only to fill **area**, which now
+  means the sparkline alone. A dark *cell* against a dark background honestly reads as "not much"; a
+  dark glyph reads as nothing at all.
+- `Model.meterStyle(ramp, at)` — area too, and raw for the same reason, **except where it would not
+  clear the track**. This is the clause the rule was missing, and it was found by measuring rather
+  than by reading: a meter's cell does not sit against the background, it sits against `meter_bg`,
+  which is a *lighter* dark. Against `#404040` the cold end of five of the nine ramps is darker than
+  the track it sits in, `download` and `upload` worst of all — so a bar at four per cent drew a hole
+  rather than a mark, which is the text failure arrived at from the other side. `meterColor` indexes
+  the ramp and then lifts the result towards the ramp's own hot end, by the least that clears the
+  floor, so only the cells that actually fail are touched and the hue still says which ramp it is.
 
-Three tests hold it, and the third is the one that matters. `TestTextStaysLegibleAcrossTheWholeRamp`
-and `TestFixedAccentsAreLegible` hold both text paths above half of `main_fg`'s luminance;
-`TestTheRawRampReallyIsTooDarkForText` pins the *premise*, so the cure cannot be "simplified" back
-into the disease with everything else still green. Luminance is Rec. 709 and is a poor proxy for a
-saturated primary — it scores `#ff0000` at 54 — which is why the accent test runs against the
-built-in theme only and the `tty` one is exempt.
+Six tests hold all this, and two of them are the ones that matter, because they pin the *premises*.
+`TestTextStaysLegibleAcrossTheWholeRamp` and `TestFixedAccentsAreLegible` hold both text paths above
+half of `main_fg`'s luminance, and `TestEveryFilledCellClearsTheTrack` holds the meter above
+`meter_bg` plus `meterFloor`; `TestTheRawRampReallyIsTooDarkForText` and
+`TestTheRampsColdEndReallyIsLostAgainstTheTrack` are why neither cure can be "simplified" back into
+its disease with everything else still green, and `TestTheLiftLeavesALegibleRampAlone` is why the
+meter's cure cannot spread to cells that never needed it. Luminance is Rec. 709 and is a poor proxy
+for a saturated primary — it scores `#ff0000` at 54 — which is why these run against the built-in
+theme only and the `tty` one is exempt. That exemption is also why `--tty` tells a meter's two halves
+apart by *shape*: eight saturated colours cannot be relied on to do it by brightness.
 
 **Three levels of emphasis, and each boundary was a mistake on one side of it.** `Model.label()` is
 halfway between `main_fg` and `inactive_fg`; `Model.value()` is `main_fg` and **not bold**. Labels
@@ -160,7 +172,8 @@ indistinguishable from the figures they name. And bolding every value made the s
 bright and flat — emphasising everything emphasises nothing.
 
 **Bold rides with colour, and the styles carry it themselves.** `magnitudeStyle`, `accentStyle` and
-`alarm` come back bold; `gradientStyle` does not, because area has no glyph to thicken. Do not add
+`alarm` come back bold; `gradientStyle` and `meterStyle` do not, because area has no glyph to
+thicken. Do not add
 `.Bold(true)` at a call site: that is how this started, as a sentence in this file plus a
 `.Bold(true)` repeated fourteen times with not one caller wanting otherwise. A rule with no
 exceptions belongs in the constructor, and `TestWeightIsBuiltIntoTheColouredStyles` keeps it there.
@@ -171,6 +184,10 @@ and takes `label()`, which is the trap this reservation exists to catch.
 
 **Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
 data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),
+`internal/ui/box` (frame geometry; the top edge comes back as typed segments, because the border, the
+title and the hotkey are three colours and finding them again inside a finished string is how a
+geometry bug becomes a colour bug — it copies the six runes rather than importing lipgloss for them,
+since depending on the styling library would put it back inside the thing it is kept outside of),
 `internal/series` (fixed-capacity `Ring`, sized from the terminal width, drops non-finite samples),
 `internal/theme` (btop `.theme` parsing, 101-step gradients matching btop's banding, plus the
 `default` and `tty` built-ins in `builtin.go`).
