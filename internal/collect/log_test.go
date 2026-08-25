@@ -172,6 +172,46 @@ func TestRotationIsFollowed(t *testing.T) {
 	}
 }
 
+// The half-read roll call belongs to the file it was read from. logrotate
+// moves that file aside mid-list, and a line of the new one must not close
+// what the old one opened: the two would commit together as a sample neither
+// file measured, and a new file that never carries a statistics block would
+// otherwise hold the stale list on screen for the whole retention hour.
+func TestRotationDropsTheHalfReadList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rclone.log")
+	writeLog(t, path,
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		"2026/08/22 17:46:33 INFO  : ",
+		"Transferred:   \t    1.431 GiB / 4.932 GiB, 29%, 12.257 MiB/s, ETA 4m52s",
+		"Elapsed time:      6m14.6s",
+		"Transferring:",
+		" *                                     other.bin: 45% / 1.024 GiB, 0 B/s, -",
+		// ... and the file moves aside before the blank line arrives.
+	)
+
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{{PID: 11, Kind: model.KindSync,
+		Args: []string{"rclone", "sync", "a", "b", "--log-file", path}}})
+	l.Collect(context.Background())
+
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatalf("rotating: %v", err)
+	}
+	writeLog(t, path, "2026/08/22 18:40:00 ERROR : one.md: Failed to copy: RootURL not set")
+
+	snap, _ := l.Collect(context.Background())
+	job := jobFor(t, snap, path)
+	if len(job.Transferring) != 1 || job.Transferring[0].Name != "big.bin" {
+		t.Errorf("in flight = %+v, want the last complete list", job.Transferring)
+	}
+}
+
 // The other rotation: the file is truncated in place and keeps its identity.
 func TestTruncationIsFollowed(t *testing.T) {
 	dir := t.TempDir()
@@ -191,6 +231,39 @@ func TestTruncationIsFollowed(t *testing.T) {
 	snap, _ := l.Collect(context.Background())
 	if !jobFor(t, snap, path).Finished {
 		t.Error("the line written after the truncation was not read")
+	}
+}
+
+// The other rotation, mid-list: the truncated-away content owned the half-read
+// roll call, and the file that replaced it must not close it.
+func TestTruncationDropsTheHalfReadList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rclone.log")
+	writeLog(t, path,
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		"2026/08/22 17:46:33 INFO  : ",
+		"Transferred:   \t    1.431 GiB / 4.932 GiB, 29%, 12.257 MiB/s, ETA 4m52s",
+		"Elapsed time:      6m14.6s",
+		"Transferring:",
+		" *                                     other.bin: 45% / 1.024 GiB, 0 B/s, -",
+	)
+
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{{PID: 11, Kind: model.KindSync,
+		Args: []string{"rclone", "sync", "a", "b", "--log-file", path}}})
+	l.Collect(context.Background())
+
+	writeLog(t, path, "2026/08/22 18:40:00 ERROR : one.md: Failed to copy: RootURL not set")
+
+	snap, _ := l.Collect(context.Background())
+	job := jobFor(t, snap, path)
+	if len(job.Transferring) != 1 || job.Transferring[0].Name != "big.bin" {
+		t.Errorf("in flight = %+v, want the last complete list", job.Transferring)
 	}
 }
 
@@ -270,6 +343,50 @@ func TestTheCatchUpJumpDropsTheHalfReadBlock(t *testing.T) {
 	snap, _ := l.Collect(context.Background())
 	if job := jobFor(t, snap, path); job.HaveStats {
 		t.Errorf("a block was committed from two different samples: %+v", job.Stats)
+	}
+}
+
+// The jump mixes nothing into the list either: entries from before it and
+// after it belong to different samples, and gathering them into one roll call
+// would commit a list no run measured.
+func TestTheCatchUpJumpDropsTheHalfReadList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rclone.log")
+	writeLog(t, path,
+		"2026/08/22 17:45:33 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      5m14.6s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		"",
+		"2026/08/22 17:46:33 INFO  : ",
+		"Transferred:   \t    1.431 GiB / 4.932 GiB, 29%, 12.257 MiB/s, ETA 4m52s",
+		"Elapsed time:      6m14.6s",
+		"Transferring:",
+		" *                                     other.bin: 45% / 1.024 GiB, 0 B/s, -",
+		// ... and the read ends here, mid-list.
+	)
+
+	l := NewLogs()
+	l.NoteProcesses([]model.Process{{PID: 11, Kind: model.KindSync,
+		Args: []string{"rclone", "sync", "a", "b", "--log-file", path}}})
+	l.Collect(context.Background())
+
+	// More than the read budget of list lines, so the next pass jumps, and the
+	// 64 KiB window lands inside them. The blank line after them is what would
+	// close the mixed list; without it the half-read state simply persists and
+	// the bug never shows.
+	filler := make([]string, 0, 20000)
+	for i := 0; i < 20000; i++ {
+		filler = append(filler, " *                                        jump.bin: 45% / 1.024 GiB, 0 B/s, -")
+	}
+	appendLog(t, path, filler...)
+	appendLog(t, path, "")
+
+	snap, _ := l.Collect(context.Background())
+	job := jobFor(t, snap, path)
+	if len(job.Transferring) != 1 || job.Transferring[0].Name != "big.bin" {
+		t.Errorf("in flight = %+v, want the last complete list", job.Transferring)
 	}
 }
 
@@ -1098,6 +1215,30 @@ func TestAHalfReadListIsNotCommitted(t *testing.T) {
 	}
 }
 
+// A run killed mid-list is followed in the same file by one that writes JSON.
+// One file collects runs started with different flags, so the successor's
+// first sample can carry more elapsed time than the dead run ever did and the
+// clock that spots a new run never goes backwards -- nothing announces it. The
+// JSON sample must still replace the half-read roll call, and an entry later
+// still, carrying no statistics of its own, must not close the dead run's list
+// over what the object named.
+func TestAJSONSampleReplacesAHalfReadList(t *testing.T) {
+	tail := feed(
+		// A text run, killed while its first roll call was being read.
+		"2026/08/22 18:39:59 INFO  : ",
+		"Transferred:   \t  731.185 MiB / 4.932 GiB, 14%, 12.408 MiB/s, ETA 5m48s",
+		"Elapsed time:      0.3s",
+		"Transferring:",
+		" *                                       big.bin: 20% / 2.861 MiB, 0 B/s, -",
+		`{"time":"2026-08-23T15:25:58.436819465+02:00","level":"notice","msg":"stats","stats":{"bytes":658496,"elapsedTime":47.6,"eta":null,"totalBytes":3040000,"totalTransfers":2,"transfers":1,"transferring":[{"bytes":40000,"eta":null,"name":"small.bin","percentage":0,"size":40000,"speed":1000}]}}`,
+		`{"time":"2026-08-23T15:25:59.000000000+02:00","level":"error","msg":"notes/todo.md: Failed to copy: RootURL not set","source":"operations/copy.go:380"}`,
+	)
+
+	if len(tail.job.Transferring) != 1 || tail.job.Transferring[0].Name != "small.bin" {
+		t.Errorf("in flight = %+v, want the JSON sample's own list", tail.job.Transferring)
+	}
+}
+
 // Nothing has been read: not "nothing is moving", which is a different answer
 // and the one a run between files gives.
 func TestNoStatsBlockLeavesFilesInFlightUnknown(t *testing.T) {
@@ -1165,4 +1306,19 @@ func about(got, want float64) bool {
 		diff = -diff
 	}
 	return diff <= 1
+}
+
+// The stats object's array comes out of a map, so it arrives in a different
+// order on every tick. Four rows that reorder themselves twice a second are
+// unreadable however correct each one is.
+func TestFilesInFlightComeOutInAFixedOrder(t *testing.T) {
+	tail := feed(`{"time":"2026-08-23T15:25:58.436819465+02:00","level":"notice","msg":"stats","stats":{"bytes":1,"elapsedTime":1,"transferring":[{"name":"second.bin","percentage":10,"size":1000},{"name":"big.bin","percentage":20,"size":2000},{"name":"a.bin","percentage":30,"size":3000}]}}`)
+
+	var names []string
+	for _, f := range tail.job.Transferring {
+		names = append(names, f.Name)
+	}
+	if strings.Join(names, ",") != "a.bin,big.bin,second.bin" {
+		t.Errorf("order = %v, want it by name", names)
+	}
 }

@@ -121,7 +121,8 @@ anything (`model/view_test.go`).
 **The UI** (`internal/ui`) is one Bubble Tea `Model`. `Update` handles four messages: window size,
 keys, a clock `tick` (so uptimes advance with no new data), and `resultMsg` from the collector
 channel — `waitFor` re-arms itself after each one. There is a single view, `renderDense` in
-`dense.go`, plus `units.go`, `graphs.go`, `format.go` (`Bytes`/`Rate`/`Duration`/`Ago`/`Truncate`).
+`dense.go`, plus `units.go`, `jobs.go`, `graphs.go`, `format.go`
+(`Bytes`/`Rate`/`Duration`/`Ago`/`Truncate`).
 It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
 something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here.
 
@@ -247,6 +248,15 @@ The rules that live there:
   stretch the time axis by however many sources happen to be enabled.
 - **`effectiveWidth`** resolves a reported width of 0 to 80. Every consumer must agree: the renderer
   treating 0 as 80 while graph sizing treated it as "too narrow" silently dropped the graphs.
+- **The files-in-flight rows share one column, and a column is shed before a row is**
+  (`jobs.go`). Their figures are all built before any row is drawn, because budgeting each name
+  against its own row starts the numbers at a different place on every line and four ragged lines
+  read as four unrelated statements. The consequence is that the widest row sets the width for all
+  of them, so on a narrow terminal the estimates go first and only then the whole list —
+  `inFlightColumn` measures every row against the same `avail`, and subtracting from the running
+  minimum instead compounds the rows and hides a list that fits. The list is also capped at
+  `maxInFlight` with the remainder counted, because four rows and no count read as a job with four
+  files left in it.
 - **A log file is append-only across runs.** One file holds every run of the job that writes it, so
   the parser has to notice where one ends and the next begins — bisync's "Synching Path1" line, or
   the elapsed time going backwards, which is the only marker a `sync` or `copy` gives. Without that
