@@ -295,11 +295,13 @@ func (t *logTail) read() error {
 		// A different file wearing the same name: logrotate moved the old one
 		// aside. The new one starts from its beginning, however much of it has
 		// already been written.
-		t.offset, t.skipPartial, t.pending = 0, false, nil
+		t.offset, t.skipPartial = 0, false
+		t.discardPartial()
 
 	case info.Size() < t.offset:
 		// Truncated in place, which is the other way logrotate can work.
-		t.offset, t.skipPartial, t.pending = 0, false, nil
+		t.offset, t.skipPartial = 0, false
+		t.discardPartial()
 
 	case info.Size()-t.offset > maxLogRead:
 		// Written faster than this collector reads. Skipping to the newest
@@ -309,7 +311,8 @@ func (t *logTail) read() error {
 		// The half-read block goes with it, for the same reason it does on a
 		// rotation: what closes a block after the jump belongs to a different
 		// one, and the two would commit together as a single mixed sample.
-		t.offset, t.skipPartial, t.pending = info.Size()-logTailWindow, true, nil
+		t.offset, t.skipPartial = info.Size()-logTailWindow, true
+		t.discardPartial()
 	}
 	t.info = info
 
@@ -350,6 +353,23 @@ func (t *logTail) read() error {
 		t.consume(line)
 	}
 	return nil
+}
+
+// discardPartial throws away everything the tail was halfway through reading.
+//
+// Every seek that is not a plain advance calls it: a rotation, a truncation, a
+// jump to the newest window. What is discarded is the block being accumulated
+// *and* the roll call of files hanging off the last one, because the line that
+// would close either of them now comes from somewhere else -- a different file,
+// or a part of this one that describes a different moment -- and the two halves
+// would commit together as a sample no run ever measured.
+//
+// The list is the easier half to forget, and the more visible when forgotten: a
+// block commits again soon enough, while a rotated-to file that never carries
+// one would hold the old list on screen for the whole retention hour.
+func (t *logTail) discardPartial() {
+	t.pending = nil
+	t.lists, t.inTransferring, t.inflight = false, false, nil
 }
 
 // plainHeader matches the prefix rclone puts on every line of a text log:
@@ -582,7 +602,20 @@ func (s jsonStats) transfers() []model.Transfer {
 		}
 		out = append(out, m)
 	}
-	return out
+	return sortTransfers(out)
+}
+
+// sortTransfers puts the files in flight in a fixed order.
+//
+// By name, because the order has to be the same one twice. The array in the
+// stats object comes out of a map and arrives shuffled differently on every
+// tick, and a list of four file names that reorders itself twice a second is
+// unreadable however correct each row is. The text form is already ordered --
+// by when each transfer started, then by name -- and is sorted again here only
+// so that a job does not change order when a log switches format between runs.
+func sortTransfers(ts []model.Transfer) []model.Transfer {
+	sort.SliceStable(ts, func(i, j int) bool { return ts[i].Name < ts[j].Name })
+	return ts
 }
 
 // bisyncPaths matches the two lines that write a pair's operands out in full.
@@ -632,7 +665,12 @@ func (t *logTail) commit(stats model.JobStats) {
 
 	t.job.Stats = stats
 	t.job.HaveStats = true
-	t.pending = nil
+	// Whatever roll call was still open belonged to the sample this one
+	// replaces, so it goes with it. The text form reopens one immediately
+	// afterwards; a JSON sample carries its own list and never does, and
+	// without this the next line of the file would close the old one over the
+	// top of it.
+	t.discardPartial()
 }
 
 // finish records how the run ended.
@@ -871,7 +909,7 @@ func (t *logTail) fileLists(msg string) bool {
 	// Over. A block that named no file still said something: nothing is in
 	// flight, which is what a run between two files looks like, and leaving the
 	// last list up instead would report files that finished minutes ago.
-	t.job.Transferring = t.inflight
+	t.job.Transferring = sortTransfers(t.inflight)
 	if t.job.Transferring == nil {
 		t.job.Transferring = []model.Transfer{}
 	}

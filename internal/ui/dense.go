@@ -263,21 +263,33 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 	// the same thing, so this is where they have to appear.
 	return head + "\n" + second + "\n" + third + "\n" +
 		m.jobProgress(row.Job) +
+		m.filesInFlight(row.Job, width) +
 		m.renderErrors(row.Errors, width)
 }
 
 // rateCell renders one direction of throughput, coloured by how close it is to
 // the largest rate seen on this host.
 func (m Model) rateCell(arrow string, bps float64, ramp string) string {
-	scale := m.peakRate
-	if scale < minRateScale {
-		scale = minRateScale
-	}
 	// Bold and blended rather than indexed: this is the line the dark-ramp
 	// problem was worst on, because an idle mount sits at frac 0 for hours.
-	st := m.magnitudeStyle(ramp, bps/scale)
+	st := m.magnitudeStyle(ramp, bps/m.rateScale())
 	return st.Render(arrow+" ") +
 		st.Render(fmt.Sprintf("%-*s", rateFieldWidth, Rate(bps, m.opts.Base10)))
+}
+
+// rateScale is the upper bound every rate on screen is graded against: the
+// largest this host has shown, floored so that a trickle on an idle machine
+// does not light up as a saturated link.
+//
+// One scale for all of them, because two would be worse than none. A file's own
+// rate and the process rate above it are the same bytes counted twice, and
+// grading them against different peaks would paint the smaller of the two
+// hotter than the larger.
+func (m Model) rateScale() float64 {
+	if m.peakRate < minRateScale {
+		return minRateScale
+	}
+	return m.peakRate
 }
 
 // sparkline draws a process's recent throughput next to its current rate.

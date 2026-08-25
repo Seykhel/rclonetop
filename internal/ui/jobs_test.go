@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +227,11 @@ func TestJobContentDoesNotOverflow(t *testing.T) {
 			At: now.Add(-time.Minute), Priority: 3,
 			Message: strings.Repeat("a long log message that keeps going ", 10),
 		}},
+		Transferring: []model.Transfer{{
+			Name:       strings.Repeat("a/long/directory/name/", 8) + "and-a-file.bin",
+			Percentage: 82, Size: 30 << 20, Speed: 1 << 22,
+			ETA: 22 * time.Minute, ETAKnown: true,
+		}},
 	}}, now)
 	m.state.SyncPairs = []model.SyncPair{{
 		Name:  "home_user_Documents..gdrive_Documents",
@@ -306,5 +312,181 @@ func TestAUnitWithoutALogIsUnchanged(t *testing.T) {
 
 	if got := plain(m, 100); strings.Contains(got, "!") {
 		t.Errorf("something was invented for a log with nothing to say:\n%s", got)
+	}
+}
+
+// inFlight is a job with files under way, ready to hang off pid 193345.
+func inFlight(ts ...model.Transfer) []model.Job {
+	return []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Stats:        model.JobStats{Bytes: 1 << 20, TotalBytes: 4 << 20, Transfers: 1, TotalTransfers: 6},
+		Transferring: ts,
+	}}
+}
+
+// The rows the dense view otherwise does not have: what rclone is moving right
+// now, rather than only how much of it. Nothing but the log can say this.
+func TestFilesInFlightAreNamedUnderTheirProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, inFlight(
+		model.Transfer{
+			Name: "40-49 Conoscenza/43 Appunti/geologia.pdf", Percentage: 78,
+			Size: 128 << 20, Speed: 3 << 20, ETA: 7 * time.Second, ETAKnown: true,
+		},
+		model.Transfer{Name: "big.bin", Percentage: 20, Size: 3 << 20},
+	), now)
+
+	got := plainProcess(m, proc, 100)
+
+	for _, want := range []string{
+		"43 Appunti/geologia.pdf", "78% of 128 MiB", "3.0 MiB/s", "ETA 7s",
+		"big.bin", "20% of 3.0 MiB",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// rclone writes "-" for a file it cannot estimate, and a run of small files
+// spends most of its time in exactly that state. Zero would read as "any
+// moment now", which is the opposite.
+func TestAFileWithNoEstimateIsNotGivenOne(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc},
+		inFlight(model.Transfer{Name: "big.bin", Percentage: 20, Size: 3 << 20}), now)
+
+	if got := plainProcess(m, proc, 100); strings.Contains(got, "ETA") {
+		t.Errorf("an estimate appeared where rclone made none:\n%s", got)
+	}
+}
+
+// A size of -1 is rclone saying it could not learn how big the source was. Zero
+// is a real answer -- an empty file -- so it cannot stand in for that one, and
+// a bare percentage would be a fraction of nothing.
+func TestAFileOfUnknownSizeIsNotCalledEmpty(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc},
+		inFlight(model.Transfer{Name: "stream.bin", Percentage: 0, Size: -1}), now)
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "unknown size") {
+		t.Errorf("missing the unknown size in:\n%s", got)
+	}
+	if strings.Contains(got, "of 0 B") {
+		t.Errorf("an unmeasured size was rendered as an empty file:\n%s", got)
+	}
+}
+
+// A run with --transfers 16 would otherwise push everything below it off the
+// screen. What is left out is counted: four rows and no count read as a job
+// with four files left in it.
+func TestALongFileListIsCappedAndSaysWhatItLeftOut(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+
+	var ts []model.Transfer
+	for i := 0; i < 7; i++ {
+		ts = append(ts, model.Transfer{
+			Name: fmt.Sprintf("file-%d.bin", i), Percentage: 50, Size: 1 << 20,
+		})
+	}
+	m := modelWithJobs([]model.Process{proc}, inFlight(ts...), now)
+
+	got := plainProcess(m, proc, 100)
+	if n := strings.Count(got, "↳ "); n != maxInFlight {
+		t.Errorf("got %d rows, want %d:\n%s", n, maxInFlight, got)
+	}
+	if !strings.Contains(got, "and 3 more transferring") {
+		t.Errorf("the three left out went unmentioned:\n%s", got)
+	}
+}
+
+// Both silences draw nothing, and there is no third way of spelling an empty
+// screen: the progress line above has already accounted for the run.
+func TestNoFilesInFlightDrawsNoRow(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+
+	for name, ts := range map[string][]model.Transfer{
+		"nothing has said":  nil,
+		"nothing is moving": {},
+	} {
+		m := modelWithJobs([]model.Process{proc}, inFlight(ts...), now)
+		if got := plainProcess(m, proc, 100); strings.Contains(got, "↳") {
+			t.Errorf("%s, and yet a row was drawn:\n%s", name, got)
+		}
+	}
+}
+
+// Below a certain width the name is all that would be cut, and a percentage
+// with no name beside it says that something is moving without saying what --
+// which the progress line above has already said better.
+func TestATerminalTooNarrowForNamesDropsTheFileList(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc},
+		inFlight(model.Transfer{Name: "some/long/path/big.bin", Percentage: 20, Size: 3 << 20}), now)
+
+	if got := plainProcess(m, proc, 30); strings.Contains(got, "of 3.0 MiB") {
+		t.Errorf("the row survived a terminal with no room for its name:\n%s", got)
+	}
+	if got := plainProcess(m, proc, 100); !strings.Contains(got, "of 3.0 MiB") {
+		t.Errorf("and it should still be there when there is room:\n%s", got)
+	}
+}
+
+// Four rows whose figures each start wherever their name happened to end read
+// as four unrelated statements. One column for all of them is most of what
+// makes a list legible at a glance, which is the gap with btop this is closing.
+func TestTheFiguresLineUpInOneColumn(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, inFlight(
+		model.Transfer{Name: "a/very/long/name/that/goes/on/big.bin", Percentage: 82,
+			Size: 30 << 20, Speed: 4200, ETA: 22 * time.Minute, ETAKnown: true},
+		model.Transfer{Name: "short.bin", Percentage: 7, Size: 3 << 20, Speed: 1200},
+	), now)
+
+	var at []int
+	for _, line := range strings.Split(plainProcess(m, proc, 100), "\n") {
+		for _, figure := range []string{"82% of", "7% of"} {
+			if i := strings.Index(line, figure); i > 0 {
+				at = append(at, i)
+			}
+		}
+	}
+	if len(at) != 2 {
+		t.Fatalf("found %d figure columns, want 2", len(at))
+	}
+	if at[0] != at[1] {
+		t.Errorf("figures start at columns %d and %d, want one column", at[0], at[1])
+	}
+}
+
+// One file with a long estimate would otherwise set the shared width for all of
+// them and take the whole list off the screen. What is in flight is worth more
+// than when it will land, so the estimate goes first.
+func TestANarrowTerminalShedsTheEstimateBeforeTheRows(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindSync, IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, inFlight(
+		model.Transfer{Name: "big.bin", Percentage: 82, Size: 30 << 20,
+			Speed: 4200, ETA: 22*time.Minute + 8*time.Second, ETAKnown: true},
+	), now)
+
+	if got := plainProcess(m, proc, 80); !strings.Contains(got, "ETA 22m8s") {
+		t.Errorf("the estimate should survive a terminal with room for it:\n%s", got)
+	}
+
+	got := plainProcess(m, proc, 45)
+	if !strings.Contains(got, "82% of 30 MiB") {
+		t.Errorf("the row went instead of the estimate:\n%s", got)
+	}
+	if strings.Contains(got, "ETA") {
+		t.Errorf("the estimate survived a terminal with no room for it:\n%s", got)
 	}
 }
