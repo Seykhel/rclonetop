@@ -369,6 +369,16 @@ func (t *logTail) read() error {
 // one would hold the old list on screen for the whole retention hour.
 func (t *logTail) discardPartial() {
 	t.pending = nil
+	t.discardLists()
+}
+
+// discardLists forgets the roll call alone, leaving any half-read block where
+// it is.
+//
+// The two halves are separable because one caller wants exactly this: a run
+// that has just announced how it ended is moving nothing, but a statistics
+// block it was midway through is still a block and may yet complete.
+func (t *logTail) discardLists() {
 	t.lists, t.inTransferring, t.inflight = false, false, nil
 }
 
@@ -682,7 +692,7 @@ func (t *logTail) finish(outcome string) {
 	// writing a final block that names no file, but bisync says how it went in
 	// words and may write nothing after them.
 	t.job.Transferring = []model.Transfer{}
-	t.lists, t.inTransferring, t.inflight = false, false, nil
+	t.discardLists()
 }
 
 // newRun resets what belonged to the previous run in the same file.
@@ -696,11 +706,10 @@ func (t *logTail) newRun() {
 	t.job.Errors = nil
 	t.job.HaveStats = false
 	t.job.Stats = model.JobStats{}
-	t.pending = nil
 	// Nil rather than empty: the new run has not said what it is moving yet,
 	// which is not the same as its having said "nothing".
 	t.job.Transferring = nil
-	t.lists, t.inTransferring, t.inflight = false, false, nil
+	t.discardPartial()
 }
 
 // recordError keeps the lines worth showing: rclone has no WARNING level, so
@@ -913,7 +922,7 @@ func (t *logTail) fileLists(msg string) bool {
 	if t.job.Transferring == nil {
 		t.job.Transferring = []model.Transfer{}
 	}
-	t.lists, t.inTransferring, t.inflight = false, false, nil
+	t.discardLists()
 	return false
 }
 

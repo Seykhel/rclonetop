@@ -148,8 +148,13 @@ func (m Model) filesInFlight(job model.Job, width int) string {
 		b.WriteString(prefix + m.value().Render(name) + figures[i] + "\n")
 	}
 	if n := len(job.Transferring) - len(shown); n > 0 {
+		// label(), not inactive_fg, and the difference from the identical-looking
+		// count under an error list is the whole of the reservation: those are
+		// entries that have already happened, these are files moving right now.
+		// A live count dimmed to the colour that means "switched off" says the
+		// opposite of what it counts.
 		b.WriteString("    " +
-			m.style("inactive_fg").Render(fmt.Sprintf("and %d more transferring", n)) +
+			m.label().Render(fmt.Sprintf("and %d more transferring", n)) +
 			"\n")
 	}
 	return b.String()

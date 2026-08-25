@@ -266,7 +266,8 @@ The rules that live there:
   committed, so they are gathered and attached when the list ends rather than reopening it, on the
   same grounds: half a list is not a measurement either. `Job.Transferring` keeps the same
   nil-versus-empty distinction as the rest of the state, and the two are both reachable — nil is a
-  run under `--stats-one-line`, empty is a run between two files.
+  run no block has been read for yet, or one under `--stats-one-line`, which prints no file list at
+  all; empty is a run between two files.
 - **systemd units are not simple.** A `Type=oneshot` sits at `activating` for its whole run and
   `inactive` afterwards whether it succeeded or not — hence `Unit.Running`, `Active`, `Failed` and
   `LastRun`. `ExitStatus` is an exit code only when `ExitCode` is `1` (CLD_EXITED); with `2` the same
