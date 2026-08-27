@@ -43,6 +43,11 @@ type Model struct {
 	height int
 	now    time.Time
 
+	// preset is which view is on screen: 0 is the dense one, 1 the framed
+	// one. btop's own numbering, and the two values are the two that exist --
+	// which is the condition #7 set for the flag that names them.
+	preset int
+
 	// peakRate is the largest throughput seen so far, used as the upper
 	// bound when grading a rate along the gradient. It auto-scales like
 	// btop's net_auto rather than assuming a link speed rclonetop cannot
@@ -154,6 +159,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cancel()
 		}
 		return m, tea.Quit
+	case "p":
+		// Alternates rather than counts up: with two presets those are
+		// the same thing, and a counter would need a modulus that means
+		// nothing until there is a third.
+		m.preset = 1 - m.preset
 	case "+", "=":
 		m.opts.UpdateMS = clampInterval(m.opts.UpdateMS / 2)
 	case "-", "_":
@@ -187,6 +197,12 @@ func (m *Model) trackPeak() {
 func (m Model) View() string {
 	if m.quitting {
 		return ""
+	}
+	if m.preset == 1 {
+		// Which may still hand back the dense view: a terminal with no
+		// room for frames gets the one that fits, and the preset is left
+		// alone so that widening the window restores what was asked for.
+		return m.renderFramed()
 	}
 	return m.renderDense()
 }

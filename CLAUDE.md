@@ -120,11 +120,45 @@ anything (`model/view_test.go`).
 
 **The UI** (`internal/ui`) is one Bubble Tea `Model`. `Update` handles four messages: window size,
 keys, a clock `tick` (so uptimes advance with no new data), and `resultMsg` from the collector
-channel — `waitFor` re-arms itself after each one. There is a single view, `renderDense` in
-`dense.go`, plus `units.go`, `jobs.go`, `graphs.go`, `format.go`
+channel — `waitFor` re-arms itself after each one. There are two views, chosen by `m.preset` and
+alternated with `p`: `renderDense` in `dense.go` (preset 0, the default) and `renderFramed` in
+`framed.go` (preset 1), plus `units.go`, `jobs.go`, `graphs.go`, `format.go`
 (`Bytes`/`Rate`/`Duration`/`Ago`/`Truncate`).
 It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
 something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here.
+
+**The framed view draws nothing the dense one cannot.** Both compose the same fragments —
+`procHead`, `procMeta`, `procThroughput`, `jobProgress`, `filesInFlight`, `denseUnits`,
+`denseCaches` — and the difference between them is only where those fragments land. A fragment only
+one view can draw is a fragment only one view gets tested, and the dense view is the one that has to
+keep working on a host nobody can widen.
+
+`layout.go` answers *where*, and answers it in arithmetic over two integers: no theme, no lipgloss,
+no state, so the awkward sizes are asserted on placements rather than on escape sequences. It
+escalates downwards — two columns from `twoColumnsFrom` (100), then one from `denseBelow` (60), then
+the dense view — and **each step is taken only if it comes out whole**. That is why the height
+threshold is derived rather than written down: an earlier attempt compared the height against a
+hand-picked minimum, and a terminal seven rows tall passed it and then dropped every panel in turn,
+leaving a framed view with nothing in it. `TestEverySizeIsCoveredExactlyOnce` is what found that, and
+a second hole with it — a column whose only growing panel had been dropped stopped short of the
+footer — which is why it sweeps sizes and asserts cover-once rather than checking rectangles it
+already believes in.
+
+- **A panel that does not fit is dropped whole, never squeezed.** A frame costs two rows before it
+  says anything, so a panel cut to its last row spends more of the screen on its border than on its
+  content, and the dense line it replaced said the same thing in one.
+- **The order they are read in is not the order they are given up.** `readingOrder` stacks transfers,
+  bandwidth, files, status; `givingUpOrder` keeps transfers, status, bandwidth, files. A host running
+  nothing has no bandwidth to report, and the question it is being asked is whether last night's run
+  succeeded.
+- A column must fill its screen: when nothing left in it grows, the last panel takes the leftover,
+  because a gap above the footer reads as a panel that failed to draw.
+- `renderFramed` replicates the dense view's **final single clamp**, with more at stake — a line that
+  wraps inside a frame takes the frame with it. Panels come back as exact rectangles (`fitCell`) for
+  the same reason: the columns are stitched row by row, so one column short slides everything to its
+  right, on that row only.
+- The height budget is the framed view's promise alone. The dense view has never budgeted against
+  `m.height`: it says what it has to say and the terminal scrolls.
 
 **A ramp may be indexed at a point somebody chose; it must never be indexed by a measurement.** This
 is the one rule of the colour vocabulary. It was first written as "raw for area, blended for text",

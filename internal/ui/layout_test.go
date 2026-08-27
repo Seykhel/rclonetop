@@ -1,0 +1,248 @@
+package ui
+
+import "testing"
+
+// A frame costs two columns and two rows of every panel it draws, and on a small
+// terminal that is most of what there is. The dense view is what rclonetop shows
+// instead -- it is tuned for eighty columns and degrades to a tmux side pane --
+// so the layout's first answer is whether to draw itself at all.
+func TestATerminalWithNoRoomForFramesAsksForTheDenseView(t *testing.T) {
+	cases := []struct {
+		name          string
+		width, height int
+		want          bool
+	}{
+		{"a narrow side pane", 40, 40, true},
+		{"one column short of the threshold", 59, 40, true},
+		{"a shell two rows tall", 120, 2, true},
+		{"wide enough and tall enough", 120, 40, false},
+		{"the conventional eighty by twenty-four", 80, 24, false},
+		// Nothing reported yet: the same default every other consumer
+		// resolves an unreported size to, or the view flips on the first
+		// WindowSizeMsg for no reason the user can see.
+		{"before the terminal has said anything", 0, 0, false},
+	}
+	for _, c := range cases {
+		if got := planLayout(c.width, c.height).dense; got != c.want {
+			t.Errorf("%s (%dx%d): dense = %v, want %v", c.name, c.width, c.height, got, c.want)
+		}
+	}
+}
+
+// kinds is the order the panels came out in, which is what most of these
+// assertions are really about.
+func kinds(l layout) []panelKind {
+	out := make([]panelKind, 0, len(l.panels))
+	for _, p := range l.panels {
+		out = append(out, p.kind)
+	}
+	return out
+}
+
+func same(a, b []panelKind) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Below the two-column width every panel is the full width of the terminal,
+// stacked in the order they are read in: what is running, how fast it is going,
+// which files, and whether anything is broken.
+func TestOneColumnStacksEveryPanelFullWidth(t *testing.T) {
+	const width, height = 80, 30
+	l := planLayout(width, height)
+
+	want := []panelKind{panelTransfers, panelBandwidth, panelFiles, panelStatus}
+	if got := kinds(l); !same(got, want) {
+		t.Fatalf("panels = %v, want %v", got, want)
+	}
+
+	y := headerRows
+	for _, p := range l.panels {
+		if p.x != 0 || p.w != width {
+			t.Errorf("%v spans %d..%d, want the whole width", p.kind, p.x, p.x+p.w)
+		}
+		if p.y != y {
+			t.Errorf("%v starts at row %d, want %d -- a gap or an overlap", p.kind, p.y, y)
+		}
+		y += p.h
+	}
+
+	// The panels fill the rows the chrome leaves, exactly. Leftover rows at
+	// the bottom of a framed view read as a rendering fault, and a row too
+	// many pushes the footer off the screen.
+	if want := height - footerRows; y != want {
+		t.Errorf("the panels end at row %d, want %d", y, want)
+	}
+}
+
+// The rule that decides what a short terminal loses. A squeezed panel is a
+// frame with one row of content in it, which says less than the dense line it
+// replaced and costs two rows to say it; so the panel goes, whole, and the ones
+// that stay keep their room.
+func TestAPanelThatDoesNotFitIsDroppedWhole(t *testing.T) {
+	cases := []struct {
+		name          string
+		width, height int
+		want          []panelKind
+		gone          []panelKind
+	}{
+		// Twenty-one rows for panels needing twenty-two: the first to go
+		// is the one whose absence is least felt.
+		{"eighty by twenty-four", 80, 24, []panelKind{panelTransfers, panelBandwidth, panelStatus}, []panelKind{panelFiles}},
+		// Room for one panel only, and it is the one the program is for.
+		{"a twelve row shell", 80, 12, []panelKind{panelTransfers}, []panelKind{panelFiles, panelBandwidth, panelStatus}},
+	}
+	for _, c := range cases {
+		l := planLayout(c.width, c.height)
+		if got := kinds(l); !same(got, c.want) {
+			t.Errorf("%s: panels = %v, want %v", c.name, got, c.want)
+		}
+		if !same(l.dropped, c.gone) {
+			t.Errorf("%s: dropped = %v, want %v", c.name, l.dropped, c.gone)
+		}
+		for _, p := range l.panels {
+			if p.h < panels[p.kind].minRows {
+				t.Errorf("%s: %v was squeezed to %d rows, its minimum is %d",
+					c.name, p.kind, p.h, panels[p.kind].minRows)
+			}
+		}
+		// Whatever survived still fills the rows the chrome leaves.
+		if bottom := l.panels[len(l.panels)-1].y + l.panels[len(l.panels)-1].h; bottom != c.height-footerRows {
+			t.Errorf("%s: the panels end at row %d, want %d", c.name, bottom, c.height-footerRows)
+		}
+	}
+}
+
+// Above the threshold the screen is split in two, because a hundred and forty
+// columns of full-width panels is a lot of white space to the right of every
+// figure -- the complaint #11 opens with. The split is by subject: what is
+// moving on the left, how it is going and whether it is healthy on the right.
+func TestAWideTerminalSplitsIntoTwoColumns(t *testing.T) {
+	const width, height = 140, 40
+	l := planLayout(width, height)
+
+	left, right := map[panelKind]placement{}, map[panelKind]placement{}
+	for _, p := range l.panels {
+		if p.x == 0 {
+			left[p.kind] = p
+		} else {
+			right[p.kind] = p
+		}
+	}
+
+	for _, k := range []panelKind{panelTransfers, panelFiles} {
+		if _, ok := left[k]; !ok {
+			t.Errorf("%v is not in the left column", k)
+		}
+	}
+	for _, k := range []panelKind{panelBandwidth, panelStatus} {
+		if _, ok := right[k]; !ok {
+			t.Errorf("%v is not in the right column", k)
+		}
+	}
+
+	// The two columns meet, with no seam and no overlap, and together they
+	// are the terminal.
+	lw, rx, rw := left[panelTransfers].w, right[panelBandwidth].x, right[panelBandwidth].w
+	if rx != lw || lw+rw != width {
+		t.Errorf("columns are 0..%d and %d..%d, want them to meet and end at %d", lw, rx, rx+rw, width)
+	}
+	// Neither column is a sliver: an eighty-twenty split would put a file
+	// name in a column that cannot hold one.
+	if lw < width/3 || rw < width/3 {
+		t.Errorf("columns %d and %d are lopsided", lw, rw)
+	}
+
+	// Both columns start under the header and both reach the footer. A short
+	// column leaves a hole at the bottom of the screen, which reads as a
+	// panel that failed to draw.
+	for _, col := range []map[panelKind]placement{left, right} {
+		top, bottom := height, 0
+		for _, p := range col {
+			if p.y < top {
+				top = p.y
+			}
+			if p.y+p.h > bottom {
+				bottom = p.y + p.h
+			}
+		}
+		if top != headerRows || bottom != height-footerRows {
+			t.Errorf("a column runs %d..%d, want %d..%d", top, bottom, headerRows, height-footerRows)
+		}
+	}
+}
+
+// The threshold itself, from both sides.
+func TestTheSecondColumnArrivesAtItsOwnWidth(t *testing.T) {
+	for _, c := range []struct {
+		width int
+		want  int
+	}{
+		{twoColumnsFrom - 1, 1},
+		{twoColumnsFrom, 2},
+	} {
+		columns := map[int]bool{}
+		for _, p := range planLayout(c.width, 40).panels {
+			columns[p.x] = true
+		}
+		if len(columns) != c.want {
+			t.Errorf("%d columns wide gave %d columns, want %d", c.width, len(columns), c.want)
+		}
+	}
+}
+
+// The sweep #11 asks for, as properties rather than as expected rectangles: at
+// every size the plan covers the screen once. Whatever the arithmetic does with
+// an odd number of rows or a column that lost its only growing panel, it may not
+// leave a hole and it may not draw two panels over each other.
+func TestEverySizeIsCoveredExactlyOnce(t *testing.T) {
+	for _, width := range []int{10, 15, 24, 40, 60, 61, 80, 99, 100, 120, 190} {
+		for _, height := range []int{3, 7, 8, 12, 24, 25, 40, 60} {
+			l := planLayout(width, height)
+			if l.dense {
+				if len(l.panels) != 0 {
+					t.Errorf("%dx%d: the dense fallback still placed %d panels", width, height, len(l.panels))
+				}
+				continue
+			}
+			if len(l.panels) == 0 {
+				t.Errorf("%dx%d: framed, and nothing in it", width, height)
+				continue
+			}
+
+			// One cell of the panel area, one panel. The area is every
+			// row between the header and the footer, across the whole
+			// width.
+			w, h := effectiveWidth(width), effectiveHeight(height)
+			owner := make(map[[2]int]panelKind, w*h)
+			for _, p := range l.panels {
+				if p.w <= 0 || p.h <= 0 {
+					t.Errorf("%dx%d: %v is %dx%d", width, height, p.kind, p.w, p.h)
+				}
+				for y := p.y; y < p.y+p.h; y++ {
+					for x := p.x; x < p.x+p.w; x++ {
+						if prev, taken := owner[[2]int{x, y}]; taken {
+							t.Fatalf("%dx%d: %v and %v both claim %d,%d",
+								width, height, prev, p.kind, x, y)
+						}
+						owner[[2]int{x, y}] = p.kind
+					}
+				}
+			}
+			for y := headerRows; y < h-footerRows; y++ {
+				for x := 0; x < w; x++ {
+					if _, taken := owner[[2]int{x, y}]; !taken {
+						t.Fatalf("%dx%d: nothing covers %d,%d", width, height, x, y)
+					}
+				}
+			}
+		}
+	}
+}
