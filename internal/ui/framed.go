@@ -68,15 +68,6 @@ func (m Model) panelDemand(v model.View, width int) panelRows {
 	return want
 }
 
-// columnWidth is how wide a panel's column will be, which the demand has to be
-// measured against and which the layout decides for itself a moment later.
-func columnWidth(width int) int {
-	if width >= twoColumnsFrom {
-		return (width + 1) / 2
-	}
-	return width
-}
-
 // framedBody draws the panels and stitches the columns together, one row at a
 // time.
 func (m Model) framedBody(plan layout, v model.View) []string {
@@ -130,23 +121,24 @@ func (m Model) framedPanel(p placement, v model.View) []string {
 	frame := box.Box{Width: p.w, Height: p.h, Runes: m.boxRunes()}
 	border := m.style(spec.color)
 
-	// Three colours across one row of runes, which is why box.Top hands back
+	// Two colours across one row of runes, which is why box.Top hands back
 	// segments rather than a finished string: the border is the panel's own
-	// colour, the name is the theme's title, and the digit that selects it is
-	// hi_fg -- btop's arrangement exactly.
+	// colour and the name is the theme's title.
+	//
+	// NoHotkey, deliberately -- see panelSpec. box keeps the geometry for a
+	// digit because the geometry is what changes when one arrives; what it
+	// must not do is put one on screen before it selects anything.
 	var top strings.Builder
-	for _, seg := range frame.Top(spec.title, spec.hotkey) {
+	for _, seg := range frame.Top(spec.title, box.NoHotkey) {
 		switch seg.Kind {
 		case box.KindTitle:
 			top.WriteString(m.style("title").Bold(true).Render(seg.Text))
-		case box.KindHotkey:
-			top.WriteString(m.style("hi_fg").Bold(true).Render(seg.Text))
 		default:
 			top.WriteString(border.Render(seg.Text))
 		}
 	}
 
-	innerW, innerH := frame.Inner()
+	innerW, innerH := p.inner()
 	body := m.panelBody(p.kind, v, innerW, innerH)
 	side := border.Render(string(frame.Runes.Vertical))
 
@@ -160,6 +152,13 @@ func (m Model) framedPanel(p placement, v model.View) []string {
 		lines = append(lines, side+fitCell(row, innerW)+side)
 	}
 	return append(lines, border.Render(frame.Bottom()))
+}
+
+// inner is the room inside a placement's frame. One place knows what a frame
+// costs -- box does -- and everything that budgets against a panel asks it
+// rather than subtracting two and hoping the frame never changes.
+func (p placement) inner() (width, height int) {
+	return box.Box{Width: p.w, Height: p.h}.Inner()
 }
 
 // fitCell cuts a rendered line to the room it has and pads what is left, so a
@@ -308,8 +307,8 @@ func (m Model) bandwidthBody(v model.View, width, height int) []string {
 			continue
 		}
 		cells := width - graphIndent
-		lines = append(lines, m.tallGraph(m.graphs.read, p.PID, "download", accentDownload, "↓", cells, rows)...)
-		lines = append(lines, m.tallGraph(m.graphs.write, p.PID, "upload", accentUpload, "↑", cells, rows)...)
+		lines = append(lines, m.tallGraph(m.graphs.read, p.PID, downward, cells, rows)...)
+		lines = append(lines, m.tallGraph(m.graphs.write, p.PID, upward, cells, rows)...)
 	}
 	return lines
 }
@@ -317,6 +316,20 @@ func (m Model) bandwidthBody(v model.View, width, height int) []string {
 // graphIndent is the two columns the arrow sits in, so a graph starts where the
 // figures above it do.
 const graphIndent = 2
+
+// direction is one way traffic goes and everything that says so: which ramp
+// colours it, which arrow labels it, and which declared accent that arrow takes.
+// The three always travel together and there are exactly two of them.
+type direction struct {
+	ramp  string
+	mark  accent
+	arrow string
+}
+
+var (
+	downward = direction{"download", accentDownload, "↓"}
+	upward   = direction{"upload", accentUpload, "↑"}
+)
 
 // graphRowsFor divides a panel's rows between the processes in it, one direction
 // each.
@@ -347,18 +360,18 @@ func graphRowsFor(height, procs int) int {
 // It is the only way --tty tells the two graphs apart, where eight colours
 // cannot, and it takes the ramp's hot end so it stays legible against the cold
 // row it now sits on.
-func (m Model) tallGraph(rings map[int]*series.Ring, pid int, ramp string, mark accent, arrow string, cells, rows int) []string {
+func (m Model) tallGraph(rings map[int]*series.Ring, pid int, d direction, cells, rows int) []string {
 	plot := m.graphs.plot(rings, pid, m.opts.GraphSymbol, cells, rows)
 	if len(plot) == 0 {
 		return nil
 	}
 
-	colors := m.graphRowColors(ramp, len(plot))
+	colors := m.graphRowColors(d.ramp, len(plot))
 	out := make([]string, len(plot))
 	for i, line := range plot {
 		lead := strings.Repeat(" ", graphIndent)
 		if i == len(plot)-1 {
-			lead = m.accentStyle(mark).Render(arrow) + " "
+			lead = m.accentStyle(d.mark).Render(d.arrow) + " "
 		}
 		out[i] = lead + lipgloss.NewStyle().Foreground(colors[i].Lipgloss()).Render(line)
 	}
