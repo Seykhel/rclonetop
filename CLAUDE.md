@@ -127,11 +127,29 @@ alternated with `p`: `renderDense` in `dense.go` (preset 0, the default) and `re
 It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
 something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here.
 
-**The framed view draws nothing the dense one cannot.** Both compose the same fragments —
-`procHead`, `procMeta`, `procThroughput`, `jobProgress`, `filesInFlight`, `denseUnits`,
-`denseCaches` — and the difference between them is only where those fragments land. A fragment only
-one view can draw is a fragment only one view gets tested, and the dense view is the one that has to
-keep working on a host nobody can widen.
+**The two views say the same things, and the framed one adds only what the room buys.** Both compose
+the same fragments — `procHead`, `procMeta`, `procThroughput`, `jobProgress`, `filesInFlight`,
+`denseUnits`, `denseCaches` — and for everything either of them *can* say, the difference is only
+where the fragment lands. A fragment drawn in one view alone is a fragment tested in one view alone,
+and the dense view is the one that has to keep working on a host nobody can widen.
+
+There are exactly two exceptions and they share one justification: **rows the dense view does not
+have.** The tall graphs in the bandwidth panel, and the meter under a job whose completion is known
+(`transfersBody`). Both restate something the dense view already prints as text — a sparkline, a
+percentage — at a size the single-line view has no room for. That is the test for a third: not "the
+framed view has space", but "the dense view prints this and the extra room makes it legible". Adding
+a fact only the framed view knows fails it, and the rule was first written without this paragraph,
+which is how the meter got in unrecorded.
+
+The rule's own cost is that both views need testing where they differ: `TestAJobWithKnownProgressGetsABar`
+and `TestTheBandwidthPanelDrawsATallGraph` exist because nothing in the dense view's suite covers them.
+
+**No hotkey digit is drawn.** btop puts one beside each box title and it *toggles the box*; drawing
+one that does nothing is "a flag accepted and ignored is worse than one rejected" moved from the
+command line to the screen, where it is harder to notice and easier to believe. `internal/ui/box`
+keeps the geometry for a digit, because the geometry is what changes when one arrives; `panelSpec`
+deliberately has no field for it, so it cannot be half-wired. The digits come back with whatever
+selects a box — #7's `shown_boxes`.
 
 `layout.go` answers *where*, and answers it in arithmetic over two integers: no theme, no lipgloss,
 no state, so the awkward sizes are asserted on placements rather than on escape sequences. It
@@ -268,8 +286,8 @@ and takes `label()`, which is the trap this reservation exists to catch.
 **Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
 data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),
 `internal/ui/box` (frame geometry; the top edge comes back as typed segments, because the border, the
-title and the hotkey are three colours and finding them again inside a finished string is how a
-geometry bug becomes a colour bug — it copies the six runes rather than importing lipgloss for them,
+title and the hotkey are three colours -- two of them drawn today -- and finding them again inside a
+finished string is how a geometry bug becomes a colour bug — it copies the six runes rather than importing lipgloss for them,
 since depending on the styling library would put it back inside the thing it is kept outside of),
 `internal/series` (fixed-capacity `Ring`, sized from the terminal width, drops non-finite samples),
 `internal/theme` (btop `.theme` parsing, 101-step gradients matching btop's banding, plus the

@@ -201,9 +201,10 @@ func (m Model) graphCells() int {
 		if plan := planLayout(m.width, m.height, panelRows{}); !plan.dense {
 			for _, p := range plan.panels {
 				if p.kind == panelBandwidth {
-					// The frame takes two columns and the arrow
-					// its indent; what is left is the trace.
-					return p.w - 2 - graphIndent
+					// What the frame leaves, less the arrow's
+					// indent, is the trace.
+					w, _ := p.inner()
+					return w - graphIndent
 				}
 			}
 		}

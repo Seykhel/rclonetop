@@ -60,13 +60,19 @@ func (k panelKind) String() string {
 }
 
 // panelSpec is what the layout knows about a panel: how small it may be, whether
-// it can use more room than that, and the three strings the renderer needs to
-// draw its top edge. The colour is a theme key rather than a colour, which is
-// what keeps this file free of the theme.
+// it can use more room than that, and the two strings the renderer needs to draw
+// its top edge. The colour is a theme key rather than a colour, which is what
+// keeps this file free of the theme.
+//
+// There is no hotkey here, and that is a decision rather than an omission. btop
+// writes a digit beside each box title and the digit *does* something -- it
+// toggles the box. Drawing one that does nothing is this repo's "a flag accepted
+// and ignored is worse than one rejected", moved from the command line to the
+// screen, where it is harder to notice and easier to believe. The digits come
+// back with whatever selects a box, which is #7's shown_boxes.
 type panelSpec struct {
 	kind    panelKind
 	title   string
-	hotkey  int
 	color   string
 	minRows int
 	// grows says the panel has a list or a graph in it that is worth more
@@ -77,16 +83,15 @@ type panelSpec struct {
 }
 
 // panels is the table, in the order they are read in: what is running, how fast
-// it is going, which files, and whether anything is broken. The hotkeys follow
-// that order, and the colours are the ones boxColorFor already assigns to the
-// same kinds of work.
+// it is going, which files, and whether anything is broken. The colours are the
+// ones boxColorFor already assigns to the same kinds of work.
 var panels = [...]panelSpec{
-	panelTransfers: {panelTransfers, "transfers", 1, "proc_box", 6, true},
-	panelBandwidth: {panelBandwidth, "bandwidth", 2, "net_box", 6, true},
-	panelFiles:     {panelFiles, "files", 3, "mem_box", 5, true},
+	panelTransfers: {panelTransfers, "transfers", "proc_box", 6, true},
+	panelBandwidth: {panelBandwidth, "bandwidth", "net_box", 6, true},
+	panelFiles:     {panelFiles, "files", "mem_box", 5, true},
 	// Units, timers, caches and sync pairs: a handful of lines that do not
 	// get better for being given more of them.
-	panelStatus: {panelStatus, "status", 4, "cpu_box", 5, false},
+	panelStatus: {panelStatus, "status", "cpu_box", 5, false},
 }
 
 // placement is one panel's rectangle, in screen coordinates.
@@ -168,10 +173,7 @@ func planColumns(w, rows int, want panelRows) (layout, bool) {
 		return layout{}, false
 	}
 
-	// The odd column goes to the left, which is where the long strings are:
-	// remotes, mountpoints and file names, all of which are truncated from
-	// the middle and lose a syllable for every column they are short.
-	lw := (w + 1) / 2
+	lw := columnWidth(w)
 
 	return layout{
 		panels: append(
@@ -179,6 +181,21 @@ func planColumns(w, rows int, want panelRows) (layout, bool) {
 			packColumn(rightKeep, lw, headerRows, w-lw, rows, want)...),
 		dropped: append(leftGone, rightGone...),
 	}, true
+}
+
+// columnWidth is how wide a panel's column is on a screen of this width.
+//
+// The odd column goes to the left, which is where the long strings are: remotes,
+// mountpoints and file names, all of which are truncated from the middle and
+// lose a syllable for every column they are short.
+//
+// One place answers this, because two would disagree by a column and the caller
+// that guesses is the one measuring how much fits.
+func columnWidth(width int) int {
+	if width < twoColumnsFrom {
+		return width
+	}
+	return (width + 1) / 2
 }
 
 // twoColumnsFrom is the width at which the screen is split in two.

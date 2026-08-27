@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/Seykhel/rclonetop/internal/ui/box"
 )
 
 // busyModel is a host with something in every panel: two processes, a job with
@@ -93,11 +94,12 @@ func TestTheFramedViewNeverOutgrowsItsTerminal(t *testing.T) {
 	}
 }
 
-// btop writes the name of a box into its top edge with the digit that selects
-// it, and that digit is the only thing on screen that says the panel can be
-// selected at all. A panel the layout dropped names nothing, because it is not
-// there to be named.
-func TestEveryPlannedPanelIsNamedWithItsDigit(t *testing.T) {
+// btop writes the name of a box into its own top edge, and a panel the layout
+// dropped names nothing, because it is not there to be named.
+//
+// No digit beside it: btop's digit toggles the box, and until something here
+// does, drawing one is the screen's version of a flag accepted and ignored.
+func TestEveryPlannedPanelIsNamedInItsTopEdge(t *testing.T) {
 	m := busyModel(time.Unix(1787433722, 0))
 
 	for _, size := range [][2]int{{80, 24}, {120, 40}, {190, 60}} {
@@ -105,11 +107,12 @@ func TestEveryPlannedPanelIsNamedWithItsDigit(t *testing.T) {
 		got := stripStyles(m.renderFramed())
 		plan := planLayout(size[0], size[1], panelRows{})
 
-		// The label, not the word: "files" also appears in "1158/4667
-		// files" and in the cache line, so a bare title would find a
-		// panel that was never drawn.
+		// The top edge, not the word: "files" also appears in
+		// "1158/4667 files" and in the cache line, so a bare title
+		// would find a panel that was never drawn.
 		label := func(k panelKind) string {
-			return fmt.Sprintf("%d %s", panels[k].hotkey, panels[k].title)
+			return fmt.Sprintf("%c%c %s ",
+				box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].title)
 		}
 		for _, p := range plan.panels {
 			if want := label(p.kind); !strings.Contains(got, want) {
