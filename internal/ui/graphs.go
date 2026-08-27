@@ -196,14 +196,28 @@ func (g *graphStore) scaleFor(pid int) float64 {
 	return scale
 }
 
-// spark renders one direction's history as a single row of glyphs. It returns
-// nothing when the terminal is too narrow to give the graph any room.
-func (g *graphStore) spark(m map[int]*series.Ring, pid int, symbol graph.Symbol) string {
+// spark renders one direction's history as a single row of glyphs, in at most
+// cells columns. It returns nothing when there is not enough room for a graph.
+//
+// The caller says how wide, because the caller is the only one who knows what it
+// is drawing into: the dense view has the terminal, a framed panel has half of
+// it, and a store sized once from the terminal drew a sixteen-cell graph into a
+// panel of fifty-eight columns. That did not overflow -- the panel cuts the line
+// to its frame -- it silently took the cumulative counters off the end of it,
+// which is the same class of mistake as two consumers disagreeing about what a
+// reported width of zero means.
+//
+// The history kept is still the bound: a graph cannot show more samples than
+// have been stored, whatever room the caller has.
+func (g *graphStore) spark(m map[int]*series.Ring, pid int, symbol graph.Symbol, cells int) string {
+	if cells > g.cells {
+		cells = g.cells
+	}
 	r, ok := m[pid]
-	if !ok || g.cells < 1 {
+	if !ok || cells < 1 {
 		return ""
 	}
-	rows := graph.Plot(r.Window(g.capacity), g.cells, 1, g.scaleFor(pid), symbol)
+	rows := graph.Plot(r.Window(cells*graph.SamplesPerCell(symbol)), cells, 1, g.scaleFor(pid), symbol)
 	if len(rows) == 0 {
 		return ""
 	}

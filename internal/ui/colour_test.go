@@ -201,7 +201,7 @@ func TestEveryFilledCellClearsTheTrack(t *testing.T) {
 func TestTheRampsColdEndReallyIsLostAgainstTheTrack(t *testing.T) {
 	// The premise the test above is the cure for, pinned so the cure cannot be
 	// "simplified" back into a plain gradientColor call with everything else
-	// still green. Five of the seven ramps start below the track; these two are
+	// still green. Five of the nine ramps start below the track; these two are
 	// the worst, and they are the ones a bandwidth meter would use.
 	th := theme.Default()
 	track := luminance(th.Color("meter_bg"))

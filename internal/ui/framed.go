@@ -145,7 +145,7 @@ func (m Model) panelBody(k panelKind, v model.View, width, height int) []string 
 	case panelTransfers:
 		lines = m.transfersBody(v, width)
 	case panelBandwidth:
-		lines = m.bandwidthBody(v)
+		lines = m.bandwidthBody(v, width)
 	case panelFiles:
 		lines = m.filesBody(v, width)
 	case panelStatus:
@@ -162,6 +162,14 @@ func (m Model) panelBody(k panelKind, v model.View, width, height int) []string 
 func (m Model) clip(lines []string, height int) []string {
 	if len(lines) <= height {
 		return lines
+	}
+	// A panel of no rows takes no lines, rather than panicking on the
+	// subtraction. Unreachable through planLayout, whose smallest panel keeps
+	// three inner rows -- and guarded here on the same grounds as the short
+	// column in framedBody: a renderer that cannot be given a bad plan is one
+	// nobody has to reason about.
+	if height < 1 {
+		return nil
 	}
 	out := append([]string(nil), lines[:height-1]...)
 	return append(out, m.label().Render(fmt.Sprintf("+%d more", len(lines)-height+1)))
@@ -181,8 +189,13 @@ func bodyLines(s string) []string {
 	return out
 }
 
-// stripStyles is bodyLines' emptiness test. A styled empty string is a pair of
-// escape sequences around nothing, which TrimSpace alone reports as content.
+// stripStyles takes the escape sequences back out of a rendered string.
+//
+// It is bodyLines' emptiness test -- a styled empty string is a pair of escapes
+// around nothing, which TrimSpace alone reports as content -- and it is what the
+// tests read a rendered view with. One copy, in production, because the two
+// halves of a duplicate diverge at the next terminator somebody adds, and the
+// half that would go stale is the one the assertions run through.
 func stripStyles(s string) string {
 	var b strings.Builder
 	esc := false
@@ -214,18 +227,36 @@ func (m Model) transfersBody(v model.View, width int) []string {
 	for _, row := range v.Procs {
 		lines = append(lines, m.procHead(row.Process, width), m.procMeta(row.Process))
 		lines = append(lines, bodyLines(m.jobProgress(row.Job))...)
+		if frac, ok := row.Job.Stats.Done(); ok {
+			// The bar the dense view has no room for, under the
+			// figures it restates. Graded along "cpu", the same ramp
+			// jobProgress paints its percentage with, so the two read
+			// as one statement rather than two.
+			//
+			// Only when the completion is known: Done() is false
+			// without a total, and a bar at nought per cent would be a
+			// claim about progress rather than a report of it.
+			lines = append(lines, "  "+m.meter("cpu", frac, width-meterMargin))
+		}
 	}
 	return lines
 }
 
-// bandwidthBody is how fast it is going, one line per process.
-func (m Model) bandwidthBody(v model.View) []string {
+// meterMargin is the two spaces a bar is indented by and the two it leaves at
+// the end, so it lines up under the figures above it instead of touching the
+// frame on either side.
+const meterMargin = 4
+
+// bandwidthBody is how fast it is going, one line per process. The width is the
+// panel's own: the graphs are budgeted against the room this line has, which
+// inside a frame is not the terminal.
+func (m Model) bandwidthBody(v model.View, width int) []string {
 	if len(v.Procs) == 0 {
 		return []string{m.style("inactive_fg").Render("idle")}
 	}
 	var lines []string
 	for _, row := range v.Procs {
-		lines = append(lines, m.procThroughput(row.Process))
+		lines = append(lines, m.procThroughput(row.Process, width))
 	}
 	return lines
 }

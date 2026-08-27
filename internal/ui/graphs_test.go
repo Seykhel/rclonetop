@@ -50,7 +50,7 @@ func TestSmallButRealRatesAreVisible(t *testing.T) {
 	g := newTestStore()
 	feed(g, 1, 11*1024, 0, g.capacity)
 
-	got := g.spark(g.read, 1, graph.Braille)
+	got := g.spark(g.read, 1, graph.Braille, g.cells)
 	if got == "" {
 		t.Fatal("no sparkline was produced")
 	}
@@ -64,7 +64,7 @@ func TestIdleProcessDrawsBlank(t *testing.T) {
 	g := newTestStore()
 	feed(g, 1, 0, 0, g.capacity)
 
-	if got := g.spark(g.read, 1, graph.Braille); strings.Trim(got, "⠀") != "" {
+	if got := g.spark(g.read, 1, graph.Braille, g.cells); strings.Trim(got, "⠀") != "" {
 		t.Errorf("an idle process drew %q, want blanks", got)
 	}
 }
@@ -75,8 +75,8 @@ func TestDirectionsShareOneScale(t *testing.T) {
 	g := newTestStore()
 	feed(g, 1, 1_000_000, 10_000, g.capacity)
 
-	read := g.spark(g.read, 1, graph.Braille)
-	write := g.spark(g.write, 1, graph.Braille)
+	read := g.spark(g.read, 1, graph.Braille, g.cells)
+	write := g.spark(g.write, 1, graph.Braille, g.cells)
 	if read == write {
 		t.Errorf("a 100:1 difference rendered identically: %q", read)
 	}
@@ -101,7 +101,7 @@ func TestUnreadableCountersProduceNoSamples(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		g.record([]model.Process{{PID: 7, StartedAt: testStart, IOAvailable: false}})
 	}
-	if got := g.spark(g.read, 7, graph.Braille); got != "" {
+	if got := g.spark(g.read, 7, graph.Braille, g.cells); got != "" {
 		t.Errorf("got %q, want no sparkline at all", got)
 	}
 }
@@ -231,13 +231,13 @@ func TestSparkCellsFollowTheTerminal(t *testing.T) {
 func TestNarrowTerminalDropsTheGraph(t *testing.T) {
 	g := newGraphStore(graph.Braille, sparkCellsFor(throughputTextWidth))
 	feed(g, 1, 1000, 1000, 4)
-	if got := g.spark(g.read, 1, graph.Braille); got != "" {
+	if got := g.spark(g.read, 1, graph.Braille, g.cells); got != "" {
 		t.Errorf("got %q, want no graph on a narrow terminal", got)
 	}
 
 	// Widening brings it back, with the history that survived the squeeze.
 	g.resize(sparkCellsFor(120), graph.Braille)
-	if got := g.spark(g.read, 1, graph.Braille); got == "" {
+	if got := g.spark(g.read, 1, graph.Braille, g.cells); got == "" {
 		t.Error("the graph did not come back after widening")
 	}
 }

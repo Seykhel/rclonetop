@@ -159,6 +159,17 @@ already believes in.
   right, on that row only.
 - The height budget is the framed view's promise alone. The dense view has never budgeted against
   `m.height`: it says what it has to say and the terminal scrolls.
+- **A graph is budgeted against the line that holds it, not against the terminal.** `graphStore.spark`
+  takes the cell count from its caller and `procThroughput` takes a width, because the dense view has
+  the terminal and a framed panel has half of it. Sizing once from `m.width` did not overflow —
+  the panel cuts the line to its frame — it silently took the `rd`/`wr` counters off the end of it,
+  which is the same class of mistake as two consumers disagreeing about `effectiveWidth(0)`. The
+  history kept is still the upper bound: a graph cannot show samples that were never stored. The
+  consequence today is that a panel of 58 columns drops its sparklines entirely, per `minSparkCells`;
+  the tall multi-row graph is what will fill that space, and it is the next slice.
+- `stripStyles` (`framed.go`) is the one escape-stripper: production needs it for `bodyLines`, the
+  tests read every rendered view through it, and the copy that would go stale is the one the
+  assertions run on.
 
 **A ramp may be indexed at a point somebody chose; it must never be indexed by a measurement.** This
 is the one rule of the colour vocabulary. It was first written as "raw for area, blended for text",

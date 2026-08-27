@@ -16,24 +16,8 @@ func plain(m Model, width int) string {
 	out := m.denseUnits(m.state.Resolve().Units, width)
 	var b strings.Builder
 	for _, line := range strings.Split(out, "\n") {
-		b.WriteString(stripANSI(line))
+		b.WriteString(stripStyles(line))
 		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-func stripANSI(s string) string {
-	var b strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case r == 0x1b:
-			inEscape = true
-		case inEscape && (r == 'm' || r == 'K'):
-			inEscape = false
-		case !inEscape:
-			b.WriteRune(r)
-		}
 	}
 	return b.String()
 }
@@ -316,7 +300,7 @@ func TestNarrowTerminalDoesNotOverflow(t *testing.T) {
 	// guarantee is that it is cut rather than wrapped.
 	for _, width := range []int{10, 15, 24, 27, 40, 60, 80, 120} {
 		m.width = width
-		for _, line := range strings.Split(stripANSI(m.renderDense()), "\n") {
+		for _, line := range strings.Split(stripStyles(m.renderDense()), "\n") {
 			if got := lipgloss.Width(line); got > width {
 				t.Errorf("at width %d a line came out %d wide: %q", width, got, line)
 			}
@@ -364,7 +348,7 @@ func TestUnitOfAShownProcessIsNotRepeated(t *testing.T) {
 	m.state.Seen[model.SourceProc] = now
 	m.width = 100
 
-	got := stripANSI(m.renderDense())
+	got := stripStyles(m.renderDense())
 
 	if strings.Contains(got, "UNIT   rclone-mount") {
 		t.Errorf("the mount is described twice:\n%s", got)
