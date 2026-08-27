@@ -119,10 +119,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// The graphs share the throughput line with fixed text, so their
-		// width -- and therefore how much history is worth keeping -- follows
-		// the terminal.
-		m.graphs.resize(sparkCellsFor(effectiveWidth(m.width)), m.opts.GraphSymbol)
+		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -164,6 +161,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the same thing, and a counter would need a modulus that means
 		// nothing until there is a third.
 		m.preset = 1 - m.preset
+		// And the history is resized with it. The two views can show
+		// wildly different amounts of it -- sixteen cells on a dense
+		// line against a panel-wide graph -- so a store sized for the
+		// one the user just left draws the other blank down its right
+		// half, or throws away history it was about to need.
+		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 	case "+", "=":
 		m.opts.UpdateMS = clampInterval(m.opts.UpdateMS / 2)
 	case "-", "_":
@@ -181,6 +184,29 @@ func clampInterval(ms int) int {
 	default:
 		return ms
 	}
+}
+
+// graphCells is how many cells of history the view on screen can show, and
+// therefore how much of it is worth keeping.
+//
+// It asks the layout rather than assuming, because the answer is the bandwidth
+// panel's width in the framed view and the leftover on the throughput line in
+// the dense one, and because a framed view on a terminal too small for frames is
+// the dense view. Every caller of resize goes through here: the two that matter
+// are a window resize and the p key, and they have to agree.
+func (m Model) graphCells() int {
+	if m.preset == 1 {
+		if plan := planLayout(m.width, m.height); !plan.dense {
+			for _, p := range plan.panels {
+				if p.kind == panelBandwidth {
+					// The frame takes two columns and the arrow
+					// its indent; what is left is the trace.
+					return p.w - 2 - graphIndent
+				}
+			}
+		}
+	}
+	return sparkCellsFor(effectiveWidth(m.width))
 }
 
 // trackPeak keeps the gradient's upper bound in step with what this host
@@ -351,6 +377,14 @@ var (
 	accentRunning  = accent{"free", 1}
 	accentBusy     = accent{"cpu", 0.5}
 	accentFailed   = accent{"temp", 1}
+
+	// The arrows that say which of two stacked graphs is which. The hot end
+	// of the graph's own ramp, so the label and the trace under it are the
+	// same colour -- and a chosen point, which is why they are declared here
+	// and walked by the legibility test rather than reached for inline.
+	// Colour alone cannot do this job: --tty has eight of them.
+	accentDownload = accent{"download", 1}
+	accentUpload   = accent{"upload", 1}
 )
 
 // textAccents is what the legibility test walks. An accent added without being
@@ -358,6 +392,7 @@ var (
 var textAccents = []accent{
 	accentCacheSize, accentSyncSize, accentActive,
 	accentRunning, accentBusy, accentFailed,
+	accentDownload, accentUpload,
 }
 
 // accentStyle colours text at a fixed, chosen point on a ramp. Bold for the same

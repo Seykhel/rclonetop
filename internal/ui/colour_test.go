@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Seykhel/rclonetop/internal/theme"
+	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
 
 func themes() map[string]*theme.Theme {
@@ -231,5 +232,45 @@ func TestTheLiftLeavesALegibleRampAlone(t *testing.T) {
 		if got, want := m.meterColor("cpu", at), th.Gradient("cpu", at); got != want {
 			t.Errorf("cpu at %.1f was lifted from %+v to %+v for no reason", at, want, got)
 		}
+	}
+}
+
+// btop grades a graph up its own height rather than along the value: the top
+// row is the ramp's hot end whatever the reading, so a peak that reaches it says
+// "this is as busy as this process has been" by colour alone.
+//
+// Raw, and this is the one place the measurement says raw is right. A graph row
+// sits against main_bg, which is black in the built-in theme; the coldest ramp
+// end is upload at luminance 32, faint but present. The meter needed lifting
+// because meter_bg is 64 -- lighter than five of the ramps' cold ends -- and a
+// graph has no track under it.
+func TestATallGraphIsGradedUpItsHeight(t *testing.T) {
+	m := meterModel(graph.Braille)
+	th := m.opts.Theme
+
+	for _, ramp := range []string{"download", "upload"} {
+		colors := m.graphRowColors(ramp, 8)
+		if len(colors) != 8 {
+			t.Fatalf("%s: %d colours for 8 rows", ramp, len(colors))
+		}
+		if want := th.Gradient(ramp, 1); colors[0] != want {
+			t.Errorf("%s: the top row is %v, want the ramp's hot end %v", ramp, colors[0], want)
+		}
+		if want := th.Gradient(ramp, 0); colors[7] != want {
+			t.Errorf("%s: the bottom row is %v, want the ramp's cold end %v", ramp, colors[7], want)
+		}
+		for i := 1; i < len(colors); i++ {
+			if luminance(colors[i-1]) < luminance(colors[i]) {
+				t.Errorf("%s: row %d is brighter than the row above it", ramp, i)
+			}
+		}
+	}
+
+	// One row is the dense view's sparkline, and it keeps the fixed point it
+	// has always had: a single row has no height to grade along, and a
+	// dense line that changed colour with this change would be a regression
+	// dressed as a feature.
+	if got, want := m.graphRowColors("download", 1), th.Gradient("download", 0.75); got[0] != want {
+		t.Errorf("a one-row graph is %v, want the sparkline's own %v", got[0], want)
 	}
 }

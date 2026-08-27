@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/Seykhel/rclonetop/internal/series"
 	"github.com/Seykhel/rclonetop/internal/ui/box"
 )
 
@@ -145,7 +146,7 @@ func (m Model) panelBody(k panelKind, v model.View, width, height int) []string 
 	case panelTransfers:
 		lines = m.transfersBody(v, width)
 	case panelBandwidth:
-		lines = m.bandwidthBody(v, width)
+		lines = m.bandwidthBody(v, width, height)
 	case panelFiles:
 		lines = m.filesBody(v, width)
 	case panelStatus:
@@ -247,18 +248,81 @@ func (m Model) transfersBody(v model.View, width int) []string {
 // frame on either side.
 const meterMargin = 4
 
-// bandwidthBody is how fast it is going, one line per process. The width is the
-// panel's own: the graphs are budgeted against the room this line has, which
-// inside a frame is not the terminal.
-func (m Model) bandwidthBody(v model.View, width int) []string {
+// bandwidthBody is how fast it is going: for each process a line of figures and,
+// under it, the two graphs those figures are the latest sample of.
+//
+// This is the panel the framing was for. Everywhere else a box holds text that
+// the dense view already holds; here the room buys something the dense line
+// cannot have, because a graph across fifty-six columns and four rows tells
+// apart rates that sixteen cells of one row round together.
+//
+// The width and the height are the panel's own. The graphs are budgeted against
+// the room this panel has, which inside a frame is not the terminal.
+func (m Model) bandwidthBody(v model.View, width, height int) []string {
 	if len(v.Procs) == 0 {
 		return []string{m.style("inactive_fg").Render("idle")}
 	}
+
+	rows := graphRowsFor(height, len(v.Procs))
 	var lines []string
 	for _, row := range v.Procs {
-		lines = append(lines, m.procThroughput(row.Process, width))
+		p := row.Process
+		lines = append(lines, m.procThroughput(p, width))
+		if rows < 1 || !p.IOAvailable {
+			// No room, or no counters to draw: the line above already
+			// says which, and a graph of nothing would contradict it.
+			continue
+		}
+		cells := width - graphIndent
+		lines = append(lines, m.tallGraph(m.graphs.read, p.PID, "download", accentDownload, "↓", cells, rows)...)
+		lines = append(lines, m.tallGraph(m.graphs.write, p.PID, "upload", accentUpload, "↑", cells, rows)...)
 	}
 	return lines
+}
+
+// graphIndent is the two columns the arrow sits in, so a graph starts where the
+// figures above it do.
+const graphIndent = 2
+
+// graphRowsFor divides a panel's rows between the processes in it, one direction
+// each.
+//
+// Every process gets the same height, whatever it is doing: a graph twice as
+// tall as the one under it reads as twice as important, and which process
+// matters is not something the layout knows. Zero means there is no room for
+// graphs at all, and the figures stand alone -- the answer the panel gave before
+// this existed.
+func graphRowsFor(height, procs int) int {
+	if procs < 1 {
+		return 0
+	}
+	// One row of figures per process, and the rest split between the two
+	// directions.
+	return (height/procs - 1) / 2
+}
+
+// tallGraph draws one direction's history under its own arrow, graded up its
+// height.
+//
+// The arrow is on the first row rather than beside a middle one: it lines the
+// label up with the top of the trace, and it is the only way --tty tells the two
+// graphs apart, where eight colours cannot.
+func (m Model) tallGraph(rings map[int]*series.Ring, pid int, ramp string, mark accent, arrow string, cells, rows int) []string {
+	plot := m.graphs.plot(rings, pid, m.opts.GraphSymbol, cells, rows)
+	if len(plot) == 0 {
+		return nil
+	}
+
+	colors := m.graphRowColors(ramp, len(plot))
+	out := make([]string, len(plot))
+	for i, line := range plot {
+		lead := strings.Repeat(" ", graphIndent)
+		if i == 0 {
+			lead = m.accentStyle(mark).Render(arrow) + " "
+		}
+		out[i] = lead + lipgloss.NewStyle().Foreground(colors[i].Lipgloss()).Render(line)
+	}
+	return out
 }
 
 // filesBody is which files are moving right now.

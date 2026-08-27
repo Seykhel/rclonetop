@@ -164,9 +164,33 @@ already believes in.
   the terminal and a framed panel has half of it. Sizing once from `m.width` did not overflow —
   the panel cuts the line to its frame — it silently took the `rd`/`wr` counters off the end of it,
   which is the same class of mistake as two consumers disagreeing about `effectiveWidth(0)`. The
-  history kept is still the upper bound: a graph cannot show samples that were never stored. The
-  consequence today is that a panel of 58 columns drops its sparklines entirely, per `minSparkCells`;
-  the tall multi-row graph is what will fill that space, and it is the next slice.
+  history kept is still the upper bound: a graph cannot show samples that were never stored.
+**The bandwidth panel is the one that pays for the framing.** Everywhere else a box holds text the
+dense view already holds; there the room buys resolution the dense line cannot have — braille gives
+four steps per row, so a graph of four rows across fifty-six columns tells apart rates that sixteen
+cells of one row round together. `graphStore.plot` is `spark` with a height, and the plotter has
+taken that height since it was written.
+
+- **A graph is graded up its own height, hot at the top — never along its value.** `graphRowColors`
+  indexes the ramp by row, so a trace that reaches the top row says "as busy as this process gets"
+  without a figure being read; grading by the value would repaint the whole graph on every sample and
+  say what the number beside it already says. **Raw**, and this is the one place the measurement says
+  raw is right: a graph row sits against `main_bg`, black in the built-in theme, and the coldest ramp
+  end is `upload` at luminance 32 — faint but present. The meter needed lifting because its cells sit
+  against `meter_bg` at 64, *lighter* than five of the nine cold ends. A graph has no track under it.
+  One row is a fixed `sparkPoint` (0.75) instead, because a single row has no height to grade along —
+  and because a dense line that changed colour with this change would be a regression dressed as a
+  feature.
+- **`maxSparkCells` belongs to the dense view's throughput line, not to the program.** Sixteen is
+  reasoned for a trace sharing a row with its own figure; the bandwidth panel gives a graph rows of
+  its own and takes the panel's width, where the cap would only throw history away. `Model.graphCells`
+  is where that choice is made, by asking the layout rather than assuming.
+- **Every `resize` goes through `graphCells`, and the `p` key is one of them.** The two views want
+  wildly different amounts of history, so a store sized for the one just left draws the other blank
+  down its right half — the failure #11 predicted in the same breath as the feature.
+- The two arrows that label the stacked graphs are **declared accents** (`accentDownload`,
+  `accentUpload`, at their ramps' hot ends). Colour alone cannot say which graph is which: `--tty` has
+  eight of them.
 - `stripStyles` (`framed.go`) is the one escape-stripper: production needs it for `bodyLines`, the
   tests read every rendered view through it, and the copy that would go stale is the one the
   assertions run on.

@@ -254,3 +254,37 @@ func TestZeroWidthFallsBackNotOff(t *testing.T) {
 		t.Errorf("an unreported width yields %d cells, so the graphs disappear", got)
 	}
 }
+
+// The plotter has always taken a height and always been given one. A graph of
+// several rows is the thing that fills a framed panel rather than listing into
+// it, and the store is where the samples and the scale for it live.
+func TestATallGraphComesBackAsThatManyRows(t *testing.T) {
+	g := newTestStore()
+	feed(g, 1, 5_000_000, 0, g.capacity)
+
+	for _, rows := range []int{1, 3, 8} {
+		got := g.plot(g.read, 1, graph.Braille, g.cells, rows)
+		if len(got) != rows {
+			t.Errorf("%d rows asked for, %d came back", rows, len(got))
+		}
+		for i, line := range got {
+			if n := len([]rune(line)); n != g.cells {
+				t.Errorf("%d rows: line %d is %d cells, want %d", rows, i, n, g.cells)
+			}
+		}
+	}
+
+	// The taller graph says more than the short one about the same data:
+	// the whole point of the height is resolution, not decoration.
+	if a, b := brailleWeight(strings.Join(g.plot(g.read, 1, graph.Braille, g.cells, 4), "")),
+		brailleWeight(g.spark(g.read, 1, graph.Braille, g.cells)); a <= b {
+		t.Errorf("four rows carry %d dots, one row %d -- the height bought nothing", a, b)
+	}
+
+	// And a graph with no room is nothing, not a panic.
+	for _, rows := range []int{0, -2} {
+		if got := g.plot(g.read, 1, graph.Braille, g.cells, rows); got != nil {
+			t.Errorf("%d rows gave %q", rows, got)
+		}
+	}
+}
