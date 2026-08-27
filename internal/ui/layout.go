@@ -114,27 +114,42 @@ type layout struct {
 	dropped []panelKind
 }
 
+// panelRows is how many rows of content each panel has to show, by kind.
+//
+// It is the one thing the layout knows about the data, and it is a count rather
+// than the data itself: the file stays arithmetic over integers, which is what
+// keeps the awkward sizes assertable without rendering anything.
+//
+// It exists because the first version distributed spare rows to whichever panels
+// were marked as able to grow, which on a real host gave eleven rows to a
+// transfers panel with two lines in it while status truncated to "+6 more"
+// beside it. Room went to whoever could take it rather than to whoever had
+// something to put in it.
+type panelRows [len(panels)]int
+
 // planLayout works out what fits in a terminal of this size. Width and height
 // are taken raw, as the model holds them, and resolved here so that no caller
-// has to remember that zero means "not yet reported".
+// has to remember that zero means "not yet reported". want may be the zero value,
+// which means nobody has said -- every panel then sits at its minimum and the
+// spare goes to the graphs, which is what this did before it was told.
 // It escalates downwards: two columns, then one, then the dense view. Each step
 // is tried and taken only if it comes out whole, which is what makes the height
 // threshold derived rather than guessed -- an earlier attempt compared the height
 // against a hand-written minimum, and a terminal seven rows tall passed it and
 // then dropped every panel in turn, leaving a framed view with nothing in it.
 // "Did anything survive" is the same question asked where the answer is known.
-func planLayout(width, height int) layout {
+func planLayout(width, height int, want panelRows) layout {
 	w, rows := effectiveWidth(width), effectiveHeight(height)-chromeRows
 
 	if w >= twoColumnsFrom {
-		if l, ok := planColumns(w, rows); ok {
+		if l, ok := planColumns(w, rows, want); ok {
 			return l
 		}
 	}
 	if w >= denseBelow {
 		if keep, dropped := fit(readingOrder, rows); len(keep) > 0 {
 			return layout{
-				panels:  packColumn(keep, 0, headerRows, w, rows),
+				panels:  packColumn(keep, 0, headerRows, w, rows, want),
 				dropped: dropped,
 			}
 		}
@@ -146,7 +161,7 @@ func planLayout(width, height int) layout {
 // having. A column that kept nothing is half a screen of nothing: the panels
 // that survived are better off spread across the whole width, which is the
 // arrangement one step down.
-func planColumns(w, rows int) (layout, bool) {
+func planColumns(w, rows int, want panelRows) (layout, bool) {
 	leftKeep, leftGone := fit(leftColumn, rows)
 	rightKeep, rightGone := fit(rightColumn, rows)
 	if len(leftKeep) == 0 || len(rightKeep) == 0 {
@@ -160,8 +175,8 @@ func planColumns(w, rows int) (layout, bool) {
 
 	return layout{
 		panels: append(
-			packColumn(leftKeep, 0, headerRows, lw, rows),
-			packColumn(rightKeep, lw, headerRows, w-lw, rows)...),
+			packColumn(leftKeep, 0, headerRows, lw, rows, want),
+			packColumn(rightKeep, lw, headerRows, w-lw, rows, want)...),
 		dropped: append(leftGone, rightGone...),
 	}, true
 }
@@ -224,15 +239,22 @@ func fit(order []panelKind, rows int) (keep, dropped []panelKind) {
 	return out, dropped
 }
 
-// packColumn stacks panels down one column, each at its minimum, and then hands
-// the rows nobody claimed to the ones that can use them.
+// packColumn stacks panels down one column and shares out the rows.
 //
-// The leftover is shared evenly rather than piled onto the first panel: a
-// transfers box twenty rows tall above a bandwidth box of six looks like a
-// rendering fault, and both of them are lists that grow. What remains after an
-// even share goes to the panels earliest in the order, which is the same tie
-// break the order itself encodes.
-func packColumn(order []panelKind, x, top, w, rows int) []placement {
+// Three passes, and the middle one is the whole point:
+//
+//  1. every panel takes its minimum;
+//  2. a panel with more content than that grows to hold it, in the order they
+//     are kept in, until the column runs out. This is what stops a list
+//     truncating beside an empty box;
+//  3. whatever nobody claimed is split evenly between the panels that grow --
+//     the graphs, which fill any height they are given.
+//
+// The leftover in the third pass is shared evenly rather than piled onto the
+// first panel: a transfers box twenty rows tall above a bandwidth box of six
+// looks like a rendering fault. What remains after an even share goes to the
+// panels earliest in the order, which is the same tie break the order encodes.
+func packColumn(order []panelKind, x, top, w, rows int, want panelRows) []placement {
 	if len(order) == 0 {
 		return nil
 	}
@@ -248,7 +270,29 @@ func packColumn(order []panelKind, x, top, w, rows int) []placement {
 		}
 	}
 
-	if spare := rows - used; spare > 0 {
+	// Pass two: content before decoration.
+	spare := rows - used
+	for _, k := range givingUpOrder {
+		if spare <= 0 {
+			break
+		}
+		for i := range out {
+			if out[i].kind != k {
+				continue
+			}
+			// The frame's own two rows come on top of the content.
+			need := want[k] + 2 - out[i].h
+			if need > spare {
+				need = spare
+			}
+			if need > 0 {
+				out[i].h += need
+				spare -= need
+			}
+		}
+	}
+
+	if spare > 0 {
 		if growers == 0 {
 			// Nothing here wants the room, and a column has to fill
 			// its screen anyway: a gap above the footer reads as a

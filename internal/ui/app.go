@@ -196,7 +196,9 @@ func clampInterval(ms int) int {
 // are a window resize and the p key, and they have to agree.
 func (m Model) graphCells() int {
 	if m.preset == 1 {
-		if plan := planLayout(m.width, m.height); !plan.dense {
+		// The demand does not change which panel is where, only how tall
+		// each one is, and this only wants the bandwidth panel's width.
+		if plan := planLayout(m.width, m.height, panelRows{}); !plan.dense {
 			for _, p := range plan.panels {
 				if p.kind == panelBandwidth {
 					// The frame takes two columns and the arrow
