@@ -23,7 +23,7 @@ func TestATerminalWithNoRoomForFramesAsksForTheDenseView(t *testing.T) {
 		{"before the terminal has said anything", 0, 0, false},
 	}
 	for _, c := range cases {
-		if got := planLayout(c.width, c.height).dense; got != c.want {
+		if got := planLayout(c.width, c.height, panelRows{}).dense; got != c.want {
 			t.Errorf("%s (%dx%d): dense = %v, want %v", c.name, c.width, c.height, got, c.want)
 		}
 	}
@@ -56,7 +56,7 @@ func same(a, b []panelKind) bool {
 // which files, and whether anything is broken.
 func TestOneColumnStacksEveryPanelFullWidth(t *testing.T) {
 	const width, height = 80, 30
-	l := planLayout(width, height)
+	l := planLayout(width, height, panelRows{})
 
 	want := []panelKind{panelTransfers, panelBandwidth, panelFiles, panelStatus}
 	if got := kinds(l); !same(got, want) {
@@ -100,7 +100,7 @@ func TestAPanelThatDoesNotFitIsDroppedWhole(t *testing.T) {
 		{"a twelve row shell", 80, 12, []panelKind{panelTransfers}, []panelKind{panelFiles, panelBandwidth, panelStatus}},
 	}
 	for _, c := range cases {
-		l := planLayout(c.width, c.height)
+		l := planLayout(c.width, c.height, panelRows{})
 		if got := kinds(l); !same(got, c.want) {
 			t.Errorf("%s: panels = %v, want %v", c.name, got, c.want)
 		}
@@ -126,7 +126,7 @@ func TestAPanelThatDoesNotFitIsDroppedWhole(t *testing.T) {
 // moving on the left, how it is going and whether it is healthy on the right.
 func TestAWideTerminalSplitsIntoTwoColumns(t *testing.T) {
 	const width, height = 140, 40
-	l := planLayout(width, height)
+	l := planLayout(width, height, panelRows{})
 
 	left, right := map[panelKind]placement{}, map[panelKind]placement{}
 	for _, p := range l.panels {
@@ -189,7 +189,7 @@ func TestTheSecondColumnArrivesAtItsOwnWidth(t *testing.T) {
 		{twoColumnsFrom, 2},
 	} {
 		columns := map[int]bool{}
-		for _, p := range planLayout(c.width, 40).panels {
+		for _, p := range planLayout(c.width, 40, panelRows{}).panels {
 			columns[p.x] = true
 		}
 		if len(columns) != c.want {
@@ -205,7 +205,7 @@ func TestTheSecondColumnArrivesAtItsOwnWidth(t *testing.T) {
 func TestEverySizeIsCoveredExactlyOnce(t *testing.T) {
 	for _, width := range []int{10, 15, 24, 40, 60, 61, 80, 99, 100, 120, 190} {
 		for _, height := range []int{3, 7, 8, 12, 24, 25, 40, 60} {
-			l := planLayout(width, height)
+			l := planLayout(width, height, panelRows{})
 			if l.dense {
 				if len(l.panels) != 0 {
 					t.Errorf("%dx%d: the dense fallback still placed %d panels", width, height, len(l.panels))
@@ -243,6 +243,52 @@ func TestEverySizeIsCoveredExactlyOnce(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// The screenshot that sent this back: status truncating to "+6 more" beside a
+// transfers panel showing two lines in eleven. Space was going to whoever was
+// marked as able to use it rather than to whoever had something to put in it.
+//
+// A panel that says how many rows it has gets them, up to what the column can
+// give, before a graph takes the rest.
+func TestAPanelGetsTheRowsItSaysItHas(t *testing.T) {
+	const width, height = 120, 32
+	rows := height - chromeRows
+
+	var want panelRows
+	want[panelStatus] = 9 // a unit, a timer, a sync pair, some caches
+	l := planLayout(width, height, want)
+
+	got := map[panelKind]placement{}
+	for _, p := range l.panels {
+		got[p.kind] = p
+	}
+
+	// Nine rows of content plus the two the frame takes.
+	if h := got[panelStatus].h; h < 11 {
+		t.Errorf("status has nine rows to show and was given %d, room for %d", h, h-2)
+	}
+	// And its column still fills the screen: what status did not want went to
+	// the graph beside it, which uses any height it is given.
+	if a, b := got[panelStatus].h, got[panelBandwidth].h; a+b != rows {
+		t.Errorf("the right column is %d rows, want %d", a+b, rows)
+	}
+
+	// A panel that wants nothing does not shrink below its minimum: the
+	// figures it does have still need room, and an empty box is honest about
+	// a host with nothing running.
+	if h := got[panelTransfers].h; h < panels[panelTransfers].minRows {
+		t.Errorf("transfers was squeezed to %d rows, its minimum is %d", h, panels[panelTransfers].minRows)
+	}
+
+	// Asking for more than the column holds is not an error, it is a "+N
+	// more": the demand is a claim about content, not a reservation.
+	huge := planLayout(width, height, panelRows{panelStatus: 500})
+	for _, p := range huge.panels {
+		if p.h > rows {
+			t.Errorf("%v claimed %d rows of a %d-row column", p.kind, p.h, rows)
 		}
 	}
 }

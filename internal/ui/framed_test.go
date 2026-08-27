@@ -81,7 +81,7 @@ func TestTheFramedViewNeverOutgrowsItsTerminal(t *testing.T) {
 		// against the height -- it says what it has to say and the
 		// terminal scrolls -- so asserting it here would be asserting
 		// something about a view this slice does not touch.
-		if got, want := len(lines), effectiveHeight(size[1]); !planLayout(size[0], size[1]).dense && got > want {
+		if got, want := len(lines), effectiveHeight(size[1]); !planLayout(size[0], size[1], panelRows{}).dense && got > want {
 			t.Errorf("%dx%d: %d lines, the terminal has %d", size[0], size[1], got, want)
 		}
 		for i, line := range lines {
@@ -103,7 +103,7 @@ func TestEveryPlannedPanelIsNamedWithItsDigit(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {120, 40}, {190, 60}} {
 		m.width, m.height = size[0], size[1]
 		got := stripStyles(m.renderFramed())
-		plan := planLayout(size[0], size[1])
+		plan := planLayout(size[0], size[1], panelRows{})
 
 		// The label, not the word: "files" also appears in "1158/4667
 		// files" and in the cache line, so a bare title would find a

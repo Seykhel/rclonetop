@@ -153,6 +153,20 @@ already believes in.
   succeeded.
 - A column must fill its screen: when nothing left in it grows, the last panel takes the leftover,
   because a gap above the footer reads as a panel that failed to draw.
+- **Content before decoration: rows go to the panel that has something to put in them.** `packColumn`
+  makes three passes — minimums, then panels with more content than their minimum growing to hold it
+  (in `givingUpOrder`), then whatever nobody claimed split between the ones that grow. Without the
+  middle pass the spare went to whoever was *able* to use it, and a real host showed the result:
+  `status` truncating to `+6 more` beside a `transfers` panel with two lines in eleven. `panelRows` is
+  the only thing the layout knows about the data and it is a count, not the data — the file stays
+  arithmetic over integers. `Model.panelDemand` measures it **by rendering the bodies**: counting any
+  other way is a second renderer that has to agree with the first, and the day it stops agreeing is
+  the day a panel truncates with room to spare. Bandwidth deliberately demands nothing, because a
+  graph fills any height and a figure for what it "has to show" would be invented to win an argument
+  with the panel beside it.
+- A graph's arrow sits on its **bottom** row. On the top it read correctly in a fixture and wrongly on
+  a host: a mount moving six kibibytes a second fills only the foot of a graph eleven rows tall, and
+  the label hung in an empty corner. The baseline is the one row a trace always reaches.
 - `renderFramed` replicates the dense view's **final single clamp**, with more at stake — a line that
   wraps inside a frame takes the frame with it. Panels come back as exact rectangles (`fitCell`) for
   the same reason: the columns are stitched row by row, so one column short slides everything to its

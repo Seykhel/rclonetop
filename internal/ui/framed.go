@@ -25,13 +25,13 @@ import (
 // column short slides everything to its right by one, and it does so on that row
 // only, which reads as a broken frame rather than as a padding bug.
 func (m Model) renderFramed() string {
-	plan := planLayout(m.width, m.height)
+	width := effectiveWidth(m.width)
+	v := m.state.Resolve()
+
+	plan := planLayout(m.width, m.height, m.panelDemand(v, width))
 	if plan.dense {
 		return m.renderDense()
 	}
-
-	width := effectiveWidth(m.width)
-	v := m.state.Resolve()
 
 	lines := make([]string, 0, effectiveHeight(m.height))
 	lines = append(lines, m.denseHeader(width))
@@ -41,6 +41,40 @@ func (m Model) renderFramed() string {
 	// The same final clamp the dense view applies, for the same reason and
 	// with more at stake: a line that wraps here takes the frame with it.
 	return lipgloss.NewStyle().MaxWidth(width).Render(strings.Join(lines, "\n"))
+}
+
+// panelDemand counts the rows each panel has to show, which is what the layout
+// shares the screen out by.
+//
+// It counts by rendering, rather than by adding up processes and units and
+// caches. Counting the other way is a second renderer that has to agree with the
+// first, and the day it stops agreeing is the day a panel truncates with room to
+// spare -- which is the bug this whole mechanism exists to fix. Rendering three
+// short bodies twice a frame costs nothing next to being wrong.
+//
+// The width is guessed at, and may be one column out for the right-hand panel of
+// an odd-width screen: how many rows a body takes does not depend on that column,
+// because these renderers truncate rather than wrap.
+//
+// Bandwidth is deliberately left at zero. Its graphs fill whatever height they
+// are given, so a figure for what it "has to show" would be a number invented to
+// win an argument with the panel beside it.
+func (m Model) panelDemand(v model.View, width int) panelRows {
+	inner := columnWidth(width) - 2
+	var want panelRows
+	want[panelTransfers] = len(m.transfersBody(v, inner))
+	want[panelFiles] = len(m.filesBody(v, inner))
+	want[panelStatus] = len(m.statusBody(v, inner))
+	return want
+}
+
+// columnWidth is how wide a panel's column will be, which the demand has to be
+// measured against and which the layout decides for itself a moment later.
+func columnWidth(width int) int {
+	if width >= twoColumnsFrom {
+		return (width + 1) / 2
+	}
+	return width
 }
 
 // framedBody draws the panels and stitches the columns together, one row at a
@@ -301,12 +335,18 @@ func graphRowsFor(height, procs int) int {
 	return (height/procs - 1) / 2
 }
 
-// tallGraph draws one direction's history under its own arrow, graded up its
+// tallGraph draws one direction's history beside its own arrow, graded up its
 // height.
 //
-// The arrow is on the first row rather than beside a middle one: it lines the
-// label up with the top of the trace, and it is the only way --tty tells the two
-// graphs apart, where eight colours cannot.
+// The arrow sits on the *bottom* row. On the first it looked right in a test
+// fixture and wrong on a real host: a mount moving six kibibytes a second fills
+// only the foot of a graph eleven rows tall, so the label hung in an empty
+// corner a long way from anything it named. The baseline is the one row a trace
+// always reaches.
+//
+// It is the only way --tty tells the two graphs apart, where eight colours
+// cannot, and it takes the ramp's hot end so it stays legible against the cold
+// row it now sits on.
 func (m Model) tallGraph(rings map[int]*series.Ring, pid int, ramp string, mark accent, arrow string, cells, rows int) []string {
 	plot := m.graphs.plot(rings, pid, m.opts.GraphSymbol, cells, rows)
 	if len(plot) == 0 {
@@ -317,7 +357,7 @@ func (m Model) tallGraph(rings map[int]*series.Ring, pid int, ramp string, mark 
 	out := make([]string, len(plot))
 	for i, line := range plot {
 		lead := strings.Repeat(" ", graphIndent)
-		if i == 0 {
+		if i == len(plot)-1 {
 			lead = m.accentStyle(mark).Render(arrow) + " "
 		}
 		out[i] = lead + lipgloss.NewStyle().Foreground(colors[i].Lipgloss()).Render(line)
