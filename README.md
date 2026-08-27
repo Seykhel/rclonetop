@@ -163,13 +163,15 @@ rclonetop [options]
 | `-h`, `--help` | show usage |
 | `-V`, `--version` | show the version |
 
-Keys: `q` or `Esc` to quit, `+` and `-` to refresh faster or slower.
+Keys: `q` or `Esc` to quit, `p` to alternate the dense view and the framed one,
+`+` and `-` to refresh faster or slower.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
 already tuned there carries over. btop's `-p` and `--vim-keys` are not accepted
-yet: they belong to the box presets and to having something on screen to move
-between, neither of which is written. A flag that is accepted and ignored is
-worse than one that is rejected, so they are not registered until they work.
+yet. There are now two views to move between, and `p` alternates them, but the
+flag that would name one at startup is not registered until it takes the whole
+range it implies -- and `--vim-keys` still has nothing to move between. A flag
+that is accepted and ignored is worse than one that is rejected.
 
 ## Configuration
 

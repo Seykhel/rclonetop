@@ -18,7 +18,7 @@ import (
 func plainProcess(m Model, p model.Process, width int) string {
 	var b strings.Builder
 	for _, line := range strings.Split(m.denseProcess(rowFor(m, p.PID), width), "\n") {
-		b.WriteString(stripANSI(line))
+		b.WriteString(stripStyles(line))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -197,7 +197,7 @@ func TestSyncPairPrefersTheRealPaths(t *testing.T) {
 		Right: model.SyncSide{Label: "gdrive_Documents", Path: "gdrive:Documents/", Files: 10},
 	}}
 
-	got := stripANSI(m.denseSyncPair(m.state.SyncPairs[0], 80))
+	got := stripStyles(m.denseSyncPair(m.state.SyncPairs[0], 80))
 	if !strings.Contains(got, "gdrive:Documents") {
 		t.Errorf("the real path is missing from:\n%s", got)
 	}
@@ -241,7 +241,7 @@ func TestJobContentDoesNotOverflow(t *testing.T) {
 
 	for _, width := range []int{10, 15, 24, 27, 40, 60, 80, 120} {
 		m.width = width
-		for _, line := range strings.Split(stripANSI(m.renderDense()), "\n") {
+		for _, line := range strings.Split(stripStyles(m.renderDense()), "\n") {
 			if got := lipgloss.Width(line); got > width {
 				t.Errorf("at width %d a line came out %d wide: %q", width, got, line)
 			}
@@ -260,7 +260,7 @@ func TestSyncPairFallsBackToTheMangledLabel(t *testing.T) {
 		Right: model.SyncSide{Label: "gdrive_Documents", Files: 10},
 	}
 
-	if got := stripANSI(m.denseSyncPair(pair, 80)); !strings.Contains(got, "gdrive_Documents") {
+	if got := stripStyles(m.denseSyncPair(pair, 80)); !strings.Contains(got, "gdrive_Documents") {
 		t.Errorf("nothing identifies the session in:\n%s", got)
 	}
 }

@@ -223,7 +223,7 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 	// the same thing, so this is where they have to appear.
 	return m.procHead(row.Process, width) + "\n" +
 		m.procMeta(row.Process) + "\n" +
-		m.procThroughput(row.Process) + "\n" +
+		m.procThroughput(row.Process, width) + "\n" +
 		m.jobProgress(row.Job) +
 		m.filesInFlight(row.Job, width) +
 		m.renderErrors(row.Errors, width)
@@ -261,24 +261,28 @@ func (m Model) procMeta(p model.Process) string {
 // procThroughput is the rates and the counters. Read and write are graded along
 // the download and upload ramps, the same two colours btop uses for network
 // traffic.
-func (m Model) procThroughput(p model.Process) string {
-	var third string
-	if p.IOAvailable {
-		third = "  " +
-			m.rateCell("↓", p.ReadRate, "download") +
-			m.sparkline(m.graphs.read, p.PID, "download") +
-			"  " + m.rateCell("↑", p.WriteRate, "upload") +
-			m.sparkline(m.graphs.write, p.PID, "upload") +
-			m.style("div_line").Render("  ·  ") +
-			m.label().Render("rd ") + m.value().Render(Bytes(p.ReadTotal, m.opts.Base10)) +
-			m.style("div_line").Render(" · ") +
-			m.label().Render("wr ") + m.value().Render(Bytes(p.WriteTotal, m.opts.Base10))
-	} else {
+//
+// width is the room this line has, which is the terminal in the dense view and
+// one panel's interior in the framed one. The graphs are budgeted from it and
+// dropped when they do not fit, rather than drawn at whatever width the last
+// window size implied.
+func (m Model) procThroughput(p model.Process, width int) string {
+	if !p.IOAvailable {
 		// Saying so is the point: a zero here would be a lie, not a
 		// measurement.
-		third = "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
+		return "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
 	}
-	return third
+
+	cells := sparkCellsFor(width)
+	return "  " +
+		m.rateCell("↓", p.ReadRate, "download") +
+		m.sparkline(m.graphs.read, p.PID, "download", cells) +
+		"  " + m.rateCell("↑", p.WriteRate, "upload") +
+		m.sparkline(m.graphs.write, p.PID, "upload", cells) +
+		m.style("div_line").Render("  ·  ") +
+		m.label().Render("rd ") + m.value().Render(Bytes(p.ReadTotal, m.opts.Base10)) +
+		m.style("div_line").Render(" · ") +
+		m.label().Render("wr ") + m.value().Render(Bytes(p.WriteTotal, m.opts.Base10))
 }
 
 // rateCell renders one direction of throughput, coloured by how close it is to
@@ -312,14 +316,17 @@ func (m Model) rateScale() float64 {
 // number beside them, so the graph reads as belonging to that number rather
 // than as a second, competing signal.
 //
-// It is one of the two callers of gradientStyle, and both are entitled to be for
-// the same reason: braille cells and meter segments are area, which is what
-// btop's ramps were drawn for. Letters go through magnitudeStyle or accentStyle
+// It is the only caller of gradientStyle, and it is entitled to be: braille
+// cells are area, which is what btop's ramps were drawn for. The meter is area
+// too and reaches the same arithmetic, but it goes through meterColor, which
+// lifts a cold cell clear of the track it sits in -- a correction a graph
+// against the background does not need.
+// Letters go through magnitudeStyle or accentStyle
 // depending on whether their fraction was measured or chosen. A raw
 // gradientStyle on something made of letters is the regression -- and it would
 // arrive unbold, since those two carry the weight and this one does not.
-func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string) string {
-	s := m.graphs.spark(rings, pid, m.opts.GraphSymbol)
+func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string, cells int) string {
+	s := m.graphs.spark(rings, pid, m.opts.GraphSymbol, cells)
 	if s == "" {
 		return ""
 	}

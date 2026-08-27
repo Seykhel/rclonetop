@@ -85,7 +85,7 @@ const meterFloor = 24
 // that a dark cell against a dark background honestly reads as "not much". True,
 // and load-bearing for the sparkline -- but a meter's cell is not against the
 // background. It is against meter_bg, a *lighter* dark, and against that the
-// cold end of five of the seven ramps is darker than the track it sits in. At
+// cold end of five of the nine ramps is darker than the track it sits in. At
 // four per cent the bar did not show a mark, it showed a hole: exactly the
 // failure the text rule exists to prevent, arrived from the other side.
 //

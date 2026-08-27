@@ -106,9 +106,11 @@ type layout struct {
 	panels []placement
 
 	// dropped are the panels there was no room for, in the order they were
-	// given up. Nothing draws them; they are here because "-d" and a test
-	// both want to know what a size cost, and a panel silently missing from
-	// a list reads as a bug in the collector rather than as a short terminal.
+	// given up. Nothing on screen shows them: the order they are surrendered
+	// in is a decision -- see givingUpOrder -- and this is what makes that
+	// decision assertable rather than inferable from which boxes happen to be
+	// missing. Deriving it in the test instead would be the test recomputing
+	// the rule it is checking.
 	dropped []panelKind
 }
 

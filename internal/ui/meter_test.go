@@ -77,7 +77,7 @@ func TestAMeterIsAllTrackAndAlwaysItsFullWidth(t *testing.T) {
 	m := meterModel(graph.Braille)
 
 	for _, frac := range []float64{0, 0.3, 1} {
-		got := stripANSI(m.meter("cpu", frac, 12))
+		got := stripStyles(m.meter("cpu", frac, 12))
 		if lipgloss.Width(got) != 12 {
 			t.Errorf("frac %v gave %d cells: %q", frac, lipgloss.Width(got), got)
 		}
@@ -92,7 +92,7 @@ func TestAMeterIsAllTrackAndAlwaysItsFullWidth(t *testing.T) {
 func TestTheTTYMeterSaysHowFullItIsInASCII(t *testing.T) {
 	m := meterModel(graph.TTY)
 
-	got := stripANSI(m.meter("cpu", 0.5, 10))
+	got := stripStyles(m.meter("cpu", 0.5, 10))
 	if want := "#####-----"; got != want {
 		t.Errorf("meter = %q, want %q", got, want)
 	}
