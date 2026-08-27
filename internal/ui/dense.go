@@ -217,17 +217,36 @@ func (m Model) denseHeader(width int) string {
 // denseProcess renders one rclone process as two lines: what it is, and what it
 // is moving.
 func (m Model) denseProcess(row model.ProcRow, width int) string {
-	p := row.Process
-	label := strings.ToUpper(string(p.Kind))
+	// The errors below were gathered by Resolve: whatever the owning systemd
+	// unit and the job's own log recorded. The unit's own line is suppressed
+	// precisely because this process line already says everything else about
+	// the same thing, so this is where they have to appear.
+	return m.procHead(row.Process, width) + "\n" +
+		m.procMeta(row.Process) + "\n" +
+		m.procThroughput(row.Process) + "\n" +
+		m.jobProgress(row.Job) +
+		m.filesInFlight(row.Job, width) +
+		m.renderErrors(row.Errors, width)
+}
+
+// The three lines a process is described by, separately because the framed view
+// deals them out to different panels: what it is acting on goes in transfers,
+// what it costs goes with it, and the throughput belongs in the bandwidth panel
+// beside its graph. The dense view stacks all three, which is what it always
+// did.
+
+// procHead is what this process is acting on, both ends of it.
+func (m Model) procHead(p model.Process, width int) string {
 	kindStyle := lipgloss.NewStyle().
 		Foreground(m.opts.Theme.Color(boxColorFor(p.Kind)).Lipgloss()).
 		Bold(true)
 
-	// First line: what this process is acting on, both ends of it.
-	head := kindStyle.Render(fmt.Sprintf("%-7s", label))
-	head += m.renderPaths(p, width-lipgloss.Width(head))
+	head := kindStyle.Render(fmt.Sprintf("%-7s", strings.ToUpper(string(p.Kind))))
+	return head + m.renderPaths(p, width-lipgloss.Width(head))
+}
 
-	// Second line: identity and cost.
+// procMeta is identity and cost: pid, uptime, resident memory, threads.
+func (m Model) procMeta(p model.Process) string {
 	meta := []string{
 		m.label().Render("pid ") + m.value().Render(fmt.Sprint(p.PID)),
 		m.label().Render("up ") + m.value().Render(Duration(p.Uptime())),
@@ -236,10 +255,13 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 	if p.Threads > 0 {
 		meta = append(meta, m.label().Render("thr ")+m.value().Render(fmt.Sprint(p.Threads)))
 	}
-	second := "  " + strings.Join(meta, m.style("div_line").Render(" · "))
+	return "  " + strings.Join(meta, m.style("div_line").Render(" · "))
+}
 
-	// Third line: throughput. Read and write are graded along the download
-	// and upload ramps, the same two colours btop uses for network traffic.
+// procThroughput is the rates and the counters. Read and write are graded along
+// the download and upload ramps, the same two colours btop uses for network
+// traffic.
+func (m Model) procThroughput(p model.Process) string {
 	var third string
 	if p.IOAvailable {
 		third = "  " +
@@ -256,15 +278,7 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 		// measurement.
 		third = "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
 	}
-
-	// The errors below were gathered by Resolve: whatever the owning systemd
-	// unit and the job's own log recorded. The unit's own line is suppressed
-	// precisely because this process line already says everything else about
-	// the same thing, so this is where they have to appear.
-	return head + "\n" + second + "\n" + third + "\n" +
-		m.jobProgress(row.Job) +
-		m.filesInFlight(row.Job, width) +
-		m.renderErrors(row.Errors, width)
+	return third
 }
 
 // rateCell renders one direction of throughput, coloured by how close it is to
@@ -341,8 +355,12 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 	}
 
 	left := m.label().Render("sources ") + strings.Join(parts, m.style("div_line").Render(" · "))
+	// Both hints take label(), not inactive_fg: they are chrome that is
+	// always actionable, which is the distinction inactive_fg is reserved
+	// against. p is named here because a key nobody is told about is the
+	// same lie as a flag that does nothing -- it is just harder to notice.
 	right := m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)) +
-		m.label().Render("  q quit")
+		m.label().Render("  p view  q quit")
 
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
