@@ -330,7 +330,7 @@ func (m Model) sparkline(rings map[int]*series.Ring, pid int, ramp string, cells
 	if s == "" {
 		return ""
 	}
-	return m.gradientStyle(ramp, 0.75).Render(s)
+	return m.gradientStyle(ramp, sparkPoint).Render(s)
 }
 
 // memStyle grades resident memory along the "used" ramp, saturating at 1 GiB.

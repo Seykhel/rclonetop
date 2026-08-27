@@ -199,3 +199,43 @@ func TestAJobWithKnownProgressGetsABar(t *testing.T) {
 		t.Errorf("a job with no statistics was given a bar:\n%s", bare)
 	}
 }
+
+// The panel the framing was for. A sparkline lists into a box; a graph of
+// several rows fills it, which is what btop's vividness actually is and what the
+// empty bandwidth panel has been waiting for.
+func TestTheBandwidthPanelDrawsATallGraph(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.width, m.height = 120, 40
+	// The way a user gets here, and the reason the key resizes the store:
+	// the history a panel-wide graph needs is not the history a sixteen-cell
+	// sparkline needs.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = next.(Model)
+	for i := 0; i < 200; i++ {
+		m.graphs.record(m.state.Processes)
+	}
+
+	var graphLines, widest int
+	for _, line := range strings.Split(stripStyles(m.renderFramed()), "\n") {
+		n := 0
+		for _, r := range line {
+			if r >= 0x2800 && r <= 0x28ff {
+				n++
+			}
+		}
+		if n > 0 {
+			graphLines++
+		}
+		if n > widest {
+			widest = n
+		}
+	}
+
+	if graphLines < 4 {
+		t.Errorf("%d rows of graph on screen, want at least four -- one direction each for two processes", graphLines)
+	}
+	// And it is a graph across the panel, not a sparkline adrift in it.
+	if widest < 40 {
+		t.Errorf("the widest graph row is %d cells; the panel has 58", widest)
+	}
+}

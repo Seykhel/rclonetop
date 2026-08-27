@@ -5,6 +5,7 @@ import (
 
 	"github.com/Seykhel/rclonetop/internal/model"
 	"github.com/Seykhel/rclonetop/internal/series"
+	"github.com/Seykhel/rclonetop/internal/theme"
 	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
 
@@ -25,17 +26,23 @@ const (
 	// cells convey nothing and the line would still overflow.
 	minSparkCells = 6
 
-	// maxSparkCells caps the history on a very wide terminal.
+	// maxSparkCells caps the sparkline on a very wide terminal.
 	//
-	// Sixteen rather than something larger because a graph is mostly blank
+	// Sixteen rather than something larger because a sparkline is mostly blank
 	// whenever the link is mostly idle -- which is the normal state of a mount
 	// -- and a wide one reads as a gap between the figure and its own trace
 	// rather than as a trace at all.
+	//
+	// That reasoning is about the dense view's throughput *line*, where the
+	// trace shares a row with the figure it belongs to, and it is a property of
+	// that line and not of the program. The framed view's bandwidth panel gives
+	// a graph rows of its own and takes the panel's full width, where the same
+	// argument does not apply and the cap would only throw history away.
 	maxSparkCells = 16
 )
 
-// sparkCellsFor divides the space left over on the throughput line between the
-// two graphs, returning zero when there is not enough for either.
+// sparkCellsFor divides the space left over on the dense view's throughput line
+// between the two graphs, returning zero when there is not enough for either.
 //
 // Every other renderer in the dense view budgets against the terminal width;
 // the graphs used to be a fixed sixteen cells, which pushed the line to
@@ -167,6 +174,42 @@ func (g *graphStore) resize(cells int, symbol graph.Symbol) {
 	}
 }
 
+// sparkPoint is where a one-row graph is taken from its ramp.
+//
+// Well up the warm end, chosen rather than measured, so it reads as belonging to
+// the figure printed beside it rather than as a second signal. A single row has
+// no height to grade along, which is why it is a point at all.
+const sparkPoint = 0.75
+
+// graphRowColors is a graph's colour, row by row from the top.
+//
+// btop grades a graph up its own height and not along its value: the top row is
+// the ramp's hot end whatever the reading, so a trace that reaches it says "as
+// busy as this process gets" without a figure being read. Grading by the value
+// instead would repaint the whole graph on every sample and say nothing the
+// number beside it does not.
+//
+// Raw, which the colour rule allows for area and which the measurement bears out
+// here: a graph row sits against main_bg, black in the built-in theme, and the
+// coldest ramp end is upload at luminance 32 -- faint, but present. The meter
+// needed lifting because its cells sit against meter_bg at 64, lighter than five
+// of the nine cold ends; a graph has no track beneath it.
+func (m Model) graphRowColors(ramp string, rows int) []theme.Color {
+	if rows < 1 {
+		return nil
+	}
+	if rows == 1 {
+		return []theme.Color{m.gradientColor(ramp, sparkPoint)}
+	}
+	out := make([]theme.Color, rows)
+	for i := range out {
+		// Top row hot: i counts down from the top, so the fraction is
+		// how far this row is from the bottom.
+		out[i] = m.gradientColor(ramp, float64(rows-1-i)/float64(rows-1))
+	}
+	return out
+}
+
 // scaleFor returns the value that fills a process's graphs.
 //
 // The scale is the largest rate in the window and nothing else, which is what
@@ -210,16 +253,31 @@ func (g *graphStore) scaleFor(pid int) float64 {
 // The history kept is still the bound: a graph cannot show more samples than
 // have been stored, whatever room the caller has.
 func (g *graphStore) spark(m map[int]*series.Ring, pid int, symbol graph.Symbol, cells int) string {
-	if cells > g.cells {
-		cells = g.cells
-	}
-	r, ok := m[pid]
-	if !ok || cells < 1 {
-		return ""
-	}
-	rows := graph.Plot(r.Window(cells*graph.SamplesPerCell(symbol)), cells, 1, g.scaleFor(pid), symbol)
+	rows := g.plot(m, pid, symbol, cells, 1)
 	if len(rows) == 0 {
 		return ""
 	}
 	return rows[0]
+}
+
+// plot renders a process's history as rows lines of cells columns, top row
+// first.
+//
+// The height is what turns a sparkline into btop's own graph, and the plotter
+// has taken it since it was written -- every caller until now passed 1, because
+// until there was a framed panel there was nowhere to put more. It buys
+// resolution rather than decoration: braille gives four steps per row, so eight
+// rows tell apart eighty rates the one-row version rounds into four.
+//
+// The scale is still the process's own peak across both directions, so a tall
+// graph and the figure beside it cannot disagree.
+func (g *graphStore) plot(m map[int]*series.Ring, pid int, symbol graph.Symbol, cells, rows int) []string {
+	if cells > g.cells {
+		cells = g.cells
+	}
+	r, ok := m[pid]
+	if !ok || cells < 1 || rows < 1 {
+		return nil
+	}
+	return graph.Plot(r.Window(cells*graph.SamplesPerCell(symbol)), cells, rows, g.scaleFor(pid), symbol)
 }
