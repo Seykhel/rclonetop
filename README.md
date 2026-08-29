@@ -165,7 +165,9 @@ rclonetop [options]
 | `-V`, `--version` | show the version |
 
 Keys: `q` or `Esc` to quit, `p` to alternate the dense view and the framed one,
-`+` and `-` to refresh faster or slower.
+`+` and `-` to refresh faster or slower, and in the framed view, `1`-`4` to
+hide or show the transfers, bandwidth, files and status panels for the rest
+of the session.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
 already tuned there carries over. btop's `-p` named a saved box arrangement; here
@@ -207,7 +209,9 @@ shown_boxes = ""
 
 `shown_boxes` lists which of the framed view's panels (`transfers`, `bandwidth`,
 `files`, `status`) to start with, space separated; left empty, every panel shows,
-including any this version has not been told about yet.
+including any this version has not been told about yet. `1`-`4` then hide or
+show a panel for the rest of the session; that choice is never written back
+here.
 
 rclonetop never writes that file. btop rewrites its own configuration on exit,
 which is not compatible with reading only, so the commented default btop would

@@ -62,18 +62,14 @@ func (k panelKind) String() string {
 }
 
 // panelSpec is what the layout knows about a panel: how small it may be, whether
-// it can use more room than that, and the two strings the renderer needs to draw
-// its top edge. The colour is a theme key rather than a colour, which is what
-// keeps this file free of the theme.
+// it can use more room than that, and the strings and digit the renderer needs
+// to draw its top edge. The colour is a theme key rather than a colour, which is
+// what keeps this file free of the theme.
 //
-// There is no hotkey here, and that is a decision rather than an omission. btop
-// writes a digit beside each box title and the digit *does* something -- it
-// toggles the box. Drawing one that does nothing is this repo's "a flag accepted
-// and ignored is worse than one rejected", moved from the command line to the
-// screen, where it is harder to notice and easier to believe. shown_boxes now
-// exists (see panelSet below) and filters which panels are candidates at all;
-// the digit itself, and the runtime toggle it drives, is the ticket that gives
-// this field a reason to be here.
+// hotkey is fixed per kind, in readingOrder, not per screen position: btop's own
+// key handler is keyed to a compiled-in box identity rather than to wherever a
+// box currently sits, and the alternative -- renumbering as panels come and go
+// -- would move the right key out from under a finger that just found it.
 type panelSpec struct {
 	kind    panelKind
 	title   string
@@ -84,18 +80,33 @@ type panelSpec struct {
 	// leftover goes to one that does -- btop's own arrangement, where the
 	// process box takes what the fixed boxes leave.
 	grows bool
+	// hotkey toggles this panel's membership in shown_boxes for the rest of
+	// the session -- box.NoHotkey would mean none, but every panel has one.
+	hotkey int
 }
 
 // panels is the table, in the order they are read in: what is running, how fast
 // it is going, which files, and whether anything is broken. The colours are the
 // ones boxColorFor already assigns to the same kinds of work.
 var panels = [...]panelSpec{
-	panelTransfers: {panelTransfers, "transfers", "proc_box", 6, true},
-	panelBandwidth: {panelBandwidth, "bandwidth", "net_box", 6, true},
-	panelFiles:     {panelFiles, "files", "mem_box", 5, true},
+	panelTransfers: {panelTransfers, "transfers", "proc_box", 6, true, 1},
+	panelBandwidth: {panelBandwidth, "bandwidth", "net_box", 6, true, 2},
+	panelFiles:     {panelFiles, "files", "mem_box", 5, true, 3},
 	// Units, timers, caches and sync pairs: a handful of lines that do not
 	// get better for being given more of them.
-	panelStatus: {panelStatus, "status", "cpu_box", 5, false},
+	panelStatus: {panelStatus, "status", "cpu_box", 5, false, 4},
+}
+
+// panelForHotkey finds which panel a digit key names, if any. Used by the key
+// handler rather than the reverse (a panel asking its own hotkey) because a
+// key press names the digit first and the panel only afterwards.
+func panelForHotkey(key int) (panelKind, bool) {
+	for k, p := range panels {
+		if p.hotkey == key {
+			return panelKind(k), true
+		}
+	}
+	return 0, false
 }
 
 // panelSet is which panels are candidates for the framed view right now --

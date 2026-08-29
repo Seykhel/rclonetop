@@ -144,12 +144,16 @@ which is how the meter got in unrecorded.
 The rule's own cost is that both views need testing where they differ: `TestAJobWithKnownProgressGetsABar`
 and `TestTheBandwidthPanelDrawsATallGraph` exist because nothing in the dense view's suite covers them.
 
-**No hotkey digit is drawn.** btop puts one beside each box title and it *toggles the box*; drawing
-one that does nothing is "a flag accepted and ignored is worse than one rejected" moved from the
-command line to the screen, where it is harder to notice and easier to believe. `internal/ui/box`
-keeps the geometry for a digit, because the geometry is what changes when one arrives; `panelSpec`
-deliberately has no field for it, so it cannot be half-wired. The digits come back with whatever
-selects a box — #7's `shown_boxes`.
+**A hotkey digit is drawn beside each box title, and it toggles the box.** It stayed undrawn until
+`shown_boxes` gave it something to select — drawing one that did nothing would have been "a flag
+accepted and ignored is worse than one rejected" moved from the command line to the screen, where it
+is harder to notice and easier to believe. `internal/ui/box` kept the geometry for it from the start,
+because the geometry is what changes when one arrives; `panelSpec` now carries it, fixed per box kind
+in `readingOrder` rather than per screen position, so the key that hides `files` does not shift under
+a finger that just found it as other panels come and go. The digit itself is `hi_fg`, a flat theme key
+looked up the same way `title` is -- not one of `textAccents`' ramp-indexed accents, since there is no
+ramp here to index -- and plain rather than bold: `alarm()` reaches for `hi_fg` too, but bold with it,
+for something wrong right now, and a permanent hotkey carries neither that weight nor that news.
 
 `layout.go` answers *where*, and answers it in arithmetic over two integers: no theme, no lipgloss,
 no state, so the awkward sizes are asserted on placements rather than on escape sequences. It

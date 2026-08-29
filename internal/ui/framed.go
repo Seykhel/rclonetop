@@ -121,18 +121,21 @@ func (m Model) framedPanel(p placement, v model.View) []string {
 	frame := box.Box{Width: p.w, Height: p.h, Runes: m.boxRunes()}
 	border := m.style(spec.color)
 
-	// Two colours across one row of runes, which is why box.Top hands back
+	// Three colours across one row of runes, which is why box.Top hands back
 	// segments rather than a finished string: the border is the panel's own
-	// colour and the name is the theme's title.
-	//
-	// NoHotkey, deliberately -- see panelSpec. box keeps the geometry for a
-	// digit because the geometry is what changes when one arrives; what it
-	// must not do is put one on screen before it selects anything.
+	// colour, the name is the theme's title, and the digit that toggles this
+	// panel is hi_fg -- a flat theme key looked up the same way title is,
+	// not one of textAccents' ramp-indexed accents, since there is no ramp
+	// here to index. Plain, not bold: alarm() also reaches for hi_fg, but
+	// bold with it, for something wrong right now: a permanent hotkey
+	// carries neither the weight nor the news, so it stops at the colour.
 	var top strings.Builder
-	for _, seg := range frame.Top(spec.title, box.NoHotkey) {
+	for _, seg := range frame.Top(spec.title, spec.hotkey) {
 		switch seg.Kind {
 		case box.KindTitle:
 			top.WriteString(m.style("title").Bold(true).Render(seg.Text))
+		case box.KindHotkey:
+			top.WriteString(m.style("hi_fg").Render(seg.Text))
 		default:
 			top.WriteString(border.Render(seg.Text))
 		}
