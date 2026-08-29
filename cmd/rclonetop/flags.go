@@ -14,12 +14,15 @@ import (
 //
 // The short forms deliberately match btop's, so that muscle memory carries
 // over: -u for the update rate, -t to force TTY mode, -l to limit the palette,
-// -c to name a configuration file.
+// -c to name a configuration file, -p to start on a given view.
 //
-// Only flags that actually do something are registered. btop's -p and
-// --vim-keys arrive with the box presets and with something to navigate;
-// declaring them now would mean accepting a flag and silently ignoring it,
-// which is worse than not accepting it at all.
+// Only flags that actually do something are registered. btop's -p named a
+// saved box arrangement and stayed unregistered until there was one to name;
+// -p here is a narrower question -- which of the two views that already exist
+// to start on -- and #11 answers it once two real views exist, ahead of #7's
+// larger box-preset system. --vim-keys still has nothing on screen to move
+// between, so it stays out: declaring it now would mean accepting a flag and
+// silently ignoring it, which is worse than not accepting it at all.
 type options struct {
 	themeName       string
 	graphSymbol     string
@@ -39,6 +42,14 @@ type options struct {
 	// to type at a prompt and too rarely changed to deserve one, so the
 	// configuration file is the only way to set it.
 	clockLayout string
+
+	// preset is the view to start in: 0 for the dense one, 1 for the framed
+	// one -- the two values that exist, which is #7's own condition for
+	// registering this flag at all (see #7 and #11). No configuration key:
+	// btop's own preset is a saved box arrangement, `presets`/`shown_boxes`
+	// in #7's still-unbuilt sense, and a `preset` key here would collide
+	// with that meaning before it exists.
+	preset int
 
 	// ttyTheme is the answer to "should the eight-colour built-in theme replace
 	// whatever was named", which --tty and --theme can both speak to. Settled
@@ -116,6 +127,8 @@ func parseFlags(args []string) (options, error) {
 	boolean(&o.base10, d.Base10Sizes, flagBase10)
 	boolean(&o.tty, d.ForceTTY, "t", flagTTY)
 	boolean(&o.lowColor, !d.TrueColor, "l", flagLowColor)
+	// No configuration key -- see the field.
+	num(&o.preset, 0, "p", "preset")
 	boolean(&o.debug, false, "d", "debug")
 	boolean(&o.noAltScreen, false, "no-alt-screen")
 	str(&o.configPath, "", "c", "config")
@@ -146,6 +159,12 @@ func parseFlags(args []string) (options, error) {
 	case "", "braille", "block", "tty":
 	default:
 		return o, fmt.Errorf("--graph-symbol must be braille, block or tty, got %q", o.graphSymbol)
+	}
+	// Unlike graph_symbol in the file, there is no runtime fallback to lean
+	// on here for a value typed at the prompt: a typo wants an answer now,
+	// not a silent drop to preset 0.
+	if o.preset != 0 && o.preset != 1 {
+		return o, fmt.Errorf("--preset must be 0 or 1, got %d", o.preset)
 	}
 	return o, nil
 }
@@ -264,6 +283,7 @@ Options:
   -t, --tty               force TTY mode: 8 colours, and ASCII graphs unless
                           --graph-symbol says otherwise
   -l, --low-color         limit output to 256 colours
+  -p, --preset <0|1>      view to start in: 0 dense (default), 1 framed
       --no-alt-screen     draw in place instead of on the alternate screen
   -c, --config <file>     read this configuration file instead of searching
       --default-config    print a commented default configuration, then exit

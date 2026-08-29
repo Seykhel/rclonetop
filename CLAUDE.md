@@ -431,13 +431,17 @@ Any new collector should follow the same shape: a real constructor plus an `...A
   the descriptor, and only for units systemd already lists. A script is read, never run: command
   substitution, `${VAR:-default}` and an unassigned variable all mean "no answer", because working
   out what those produce means executing it.
-- **No flag that does nothing.** btop's `-p` and `--vim-keys` are intentionally unregistered until
-  the box presets exist and there is something on screen to move between; accepting and ignoring a
-  flag is worse than rejecting it. Short flags mirror btop's meaning where it applies. The same rule
+- **No flag that does nothing.** `--vim-keys` is intentionally unregistered until there is something
+  on screen to move between; accepting and ignoring a flag is worse than rejecting it. `-p` was the
+  same story until #11 gave it something narrower to name than btop's own box arrangement: with two
+  real views to start on, `-p, --preset 0|1` is registered, and it takes only those two values because
+  those are the ones that exist. Short flags mirror btop's meaning where it applies. The same rule
   binds `internal/config`: `shown_boxes`, `presets` and `vim_keys` get no `Config` field to be parsed
-  into and shelved. A key read into a field that nothing consumes is the same lie as a flag, and
-  harder to notice in a file than at a prompt. (Unrecognised keys are still skipped in silence, for
-  the forward-compatibility reason below — that is a cost of the design, not a warning system.)
+  into and shelved, and neither does `preset` -- it stays flag-only because a key of that name would
+  collide with btop's own `presets` before #7 builds what that one means. A key read into a field that
+  nothing consumes is the same lie as a flag, and harder to notice in a file than at a prompt.
+  (Unrecognised keys are still skipped in silence, for the forward-compatibility reason below — that
+  is a cost of the design, not a warning system.)
 - **No new dependencies without a real reason.** Graphing and theme parsing are hand-written
   precisely because the requirement is narrower than any library's. `github.com/charmbracelet/x/term`
   is a direct require and was not a new dependency when it became one: bubbletea already links it to

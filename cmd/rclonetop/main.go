@@ -185,6 +185,7 @@ func run() error {
 		Base10:      flags.base10,
 		GraphSymbol: symbol,
 		ClockLayout: flags.clockLayout,
+		Preset:      flags.preset,
 		Host:        host,
 	}, cancel)
 

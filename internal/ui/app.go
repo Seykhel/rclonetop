@@ -31,6 +31,9 @@ type Options struct {
 	Host        string
 	ClockLayout string
 	GraphSymbol graph.Symbol
+	// Preset is the view to start in: 0 for the dense one, 1 for the framed
+	// one -- mirrored by Model.preset, which p then alternates at runtime.
+	Preset int
 }
 
 // Model is the root Bubble Tea model.
@@ -88,6 +91,7 @@ func New(results <-chan collect.Result, opts Options, cancel context.CancelFunc)
 		state:   model.NewState(),
 		results: results,
 		now:     time.Now(),
+		preset:  opts.Preset,
 		graphs:  newGraphStore(opts.GraphSymbol, sparkCellsFor(effectiveWidth(0))),
 		cancel:  cancel,
 	}

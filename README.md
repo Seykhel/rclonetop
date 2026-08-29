@@ -157,6 +157,7 @@ rclonetop [options]
 | `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs — but a `--theme` or `--graph-symbol` named alongside it still wins |
 | `-l`, `--low-color` | limit output to 256 colours |
 | `--no-alt-screen` | draw in place instead of on the alternate screen |
+| `-p`, `--preset <0\|1>` | view to start in: `0` dense (default), `1` framed |
 | `-c`, `--config <file>` | read this configuration file instead of searching |
 | `--default-config` | print a commented default configuration, then exit |
 | `-d`, `--debug` | print what each collector saw, then exit |
@@ -167,17 +168,18 @@ Keys: `q` or `Esc` to quit, `p` to alternate the dense view and the framed one,
 `+` and `-` to refresh faster or slower.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
-already tuned there carries over. btop's `-p` and `--vim-keys` are not accepted
-yet. There are now two views to move between, and `p` alternates them, but the
-flag that would name one at startup is not registered until it takes the whole
-range it implies -- and `--vim-keys` still has nothing to move between. A flag
+already tuned there carries over. btop's `-p` named a saved box arrangement; here
+it is narrower, picking between the two views that already exist. `--vim-keys`
+still has nothing on screen to move between and is not accepted yet -- a flag
 that is accepted and ignored is worse than one that is rejected.
 
 ## Configuration
 
 Most of what the flags set can be set once in a file instead — everything that
 is a setting rather than an action, which leaves out `-d`, `-h`, `-V`, `-c` and
-`--default-config`, and for now `--no-alt-screen` as well:
+`--default-config`, and for now `--no-alt-screen` and `-p`/`--preset` as well
+(btop's own `preset`/`presets` name a saved box arrangement, which does not
+exist yet -- see #7):
 
 ```
 $XDG_CONFIG_HOME/rclonetop/rclonetop.conf

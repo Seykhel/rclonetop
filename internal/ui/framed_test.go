@@ -153,6 +153,19 @@ func TestPAlternatesBetweenTheTwoViews(t *testing.T) {
 	}
 }
 
+// Options.Preset is what --preset reaches: a session can be started already
+// on the framed view, not only alternated into it with p mid-session.
+func TestOptionsPresetChoosesTheStartingView(t *testing.T) {
+	lipgloss.SetColorProfile(0)
+	m := New(nil, Options{Preset: 1}, nil)
+	m.state = busyModel(time.Unix(1787433722, 0)).state
+	m.width, m.height = 120, 40
+
+	if !strings.ContainsRune(stripStyles(m.View()), '╭') {
+		t.Error("Options.Preset = 1 did not start on the framed view")
+	}
+}
+
 // The graphs are budgeted against the terminal, and inside a frame the room is
 // the panel's. Getting that wrong does not look like a bug: the line is cut to
 // the frame, so the upload graph loses a few cells and the cumulative counters
