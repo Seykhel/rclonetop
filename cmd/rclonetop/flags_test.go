@@ -131,6 +131,7 @@ func TestApplyConfigFillsWhatTheCommandLineDidNotSay(t *testing.T) {
 		ForceTTY:        true,
 		TrueColor:       false,
 		ClockLayout:     "15:04",
+		ShownBoxes:      "transfers status",
 	}
 	o = applyConfig(o, cfg)
 
@@ -158,6 +159,9 @@ func TestApplyConfigFillsWhatTheCommandLineDidNotSay(t *testing.T) {
 	}
 	if o.clockLayout != "15:04" {
 		t.Errorf("clockLayout = %q, want 15:04", o.clockLayout)
+	}
+	if o.shownBoxes != "transfers status" {
+		t.Errorf("shownBoxes = %q, want transfers status", o.shownBoxes)
 	}
 }
 

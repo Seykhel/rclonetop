@@ -202,7 +202,12 @@ base_10_sizes = False
 force_tty = False
 truecolor = True
 clock_layout = "15:04:05"
+shown_boxes = ""
 ```
+
+`shown_boxes` lists which of the framed view's panels (`transfers`, `bandwidth`,
+`files`, `status`) to start with, space separated; left empty, every panel shows,
+including any this version has not been told about yet.
 
 rclonetop never writes that file. btop rewrites its own configuration on exit,
 which is not compatible with reading only, so the commented default btop would

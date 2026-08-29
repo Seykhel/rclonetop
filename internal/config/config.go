@@ -70,6 +70,15 @@ type Config struct {
 	// is the same, and a format nobody can share between the two is not the
 	// same meaning.
 	ClockLayout string
+	// ShownBoxes lists which framed-view panels to start with, space
+	// separated. Empty is a third state, not "none": it means every panel,
+	// the same trick GraphSymbol's own empty state plays, so a file written
+	// before a panel kind existed keeps showing it once a later version adds
+	// one. Not validated here for the same reason GraphSymbol is not: this
+	// package has no reason to know the panel vocabulary, and an
+	// unrecognised name is dropped where that vocabulary actually lives,
+	// internal/ui, not refused here.
+	ShownBoxes string
 }
 
 // Defaults is the configuration rclonetop uses when no file is found. It must
@@ -85,6 +94,7 @@ func Defaults() Config {
 		ForceTTY:        false,
 		TrueColor:       true,
 		ClockLayout:     "15:04:05",
+		ShownBoxes:      "",
 	}
 }
 
@@ -218,6 +228,13 @@ func parse(name string, r io.Reader) (Config, error) {
 				return fail(fmt.Errorf("takes a Go reference layout such as %q, not btop's strftime string", "15:04:05"))
 			}
 			cfg.ClockLayout = value
+		case "shown_boxes":
+			// Not validated, unlike a value that comes with a runtime
+			// fallback of its own: this package has no reason to know the
+			// panel vocabulary, so a name it cannot place is passed through
+			// for internal/ui to drop, the same split graph_symbol already
+			// draws between "parsed here" and "interpreted there".
+			cfg.ShownBoxes = value
 		case "clock_format":
 			// The one deliberate exception to skipping keys this build does not
 			// know. Every other unrecognised key might be a later version's;

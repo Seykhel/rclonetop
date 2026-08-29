@@ -28,7 +28,7 @@ func (m Model) renderFramed() string {
 	width := effectiveWidth(m.width)
 	v := m.state.Resolve()
 
-	plan := planLayout(m.width, m.height, m.panelDemand(v, width))
+	plan := planLayout(m.width, m.height, m.panelDemand(v, width), m.shown)
 	if plan.dense {
 		return m.renderDense()
 	}

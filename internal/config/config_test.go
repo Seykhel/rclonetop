@@ -18,6 +18,7 @@ base_10_sizes = True
 force_tty = True
 truecolor = False
 clock_layout = "15:04"
+shown_boxes = "transfers status"
 `
 	got, err := parse("test.conf", strings.NewReader(file))
 	if err != nil {
@@ -32,6 +33,7 @@ clock_layout = "15:04"
 		ForceTTY:        true,
 		TrueColor:       false,
 		ClockLayout:     "15:04",
+		ShownBoxes:      "transfers status",
 	}
 	if got != want {
 		t.Errorf("parse = %+v, want %+v", got, want)
@@ -138,6 +140,19 @@ func TestParseAcceptsAnUnknownGraphSymbol(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsAnUnknownShownBoxesName(t *testing.T) {
+	// This package has no reason to know the panel vocabulary, so it neither
+	// validates nor drops a name -- internal/ui does that, the same split
+	// already drawn for graph_symbol.
+	got, err := parse("test.conf", strings.NewReader("shown_boxes = \"transfers remotes\"\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.ShownBoxes != "transfers remotes" {
+		t.Errorf("ShownBoxes = %q, want it passed through untouched", got.ShownBoxes)
+	}
+}
+
 func TestParseRejectsMalformedValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -205,6 +220,7 @@ func TestDefaultFileDocumentsEveryKey(t *testing.T) {
 	keys := []string{
 		"color_theme", "theme_background", "graph_symbol",
 		"update_ms", "base_10_sizes", "force_tty", "truecolor", "clock_layout",
+		"shown_boxes",
 	}
 	// The list above is written out by hand, so a field added to Config would
 	// otherwise slip past both this test and the file it checks -- the round

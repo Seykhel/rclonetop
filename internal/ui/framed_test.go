@@ -82,7 +82,7 @@ func TestTheFramedViewNeverOutgrowsItsTerminal(t *testing.T) {
 		// against the height -- it says what it has to say and the
 		// terminal scrolls -- so asserting it here would be asserting
 		// something about a view this slice does not touch.
-		if got, want := len(lines), effectiveHeight(size[1]); !planLayout(size[0], size[1], panelRows{}).dense && got > want {
+		if got, want := len(lines), effectiveHeight(size[1]); !planLayout(size[0], size[1], panelRows{}, allShown()).dense && got > want {
 			t.Errorf("%dx%d: %d lines, the terminal has %d", size[0], size[1], got, want)
 		}
 		for i, line := range lines {
@@ -105,7 +105,7 @@ func TestEveryPlannedPanelIsNamedInItsTopEdge(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {120, 40}, {190, 60}} {
 		m.width, m.height = size[0], size[1]
 		got := stripStyles(m.renderFramed())
-		plan := planLayout(size[0], size[1], panelRows{})
+		plan := planLayout(size[0], size[1], panelRows{}, allShown())
 
 		// The top edge, not the word: "files" also appears in
 		// "1158/4667 files" and in the cache line, so a bare title
@@ -163,6 +163,43 @@ func TestOptionsPresetChoosesTheStartingView(t *testing.T) {
 
 	if !strings.ContainsRune(stripStyles(m.View()), '╭') {
 		t.Error("Options.Preset = 1 did not start on the framed view")
+	}
+}
+
+// Options.ShownBoxes is shown_boxes resolved once at construction: the panels
+// it names are what the framed view has to work with for the run, until a
+// runtime digit toggle exists to change that.
+func TestOptionsShownBoxesFiltersTheStartingView(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.shown = parseShownBoxes("transfers status")
+	m.width, m.height = 120, 40
+
+	got := stripStyles(m.renderFramed())
+	label := func(title string) string {
+		return fmt.Sprintf("%c%c %s ", box.Rounded.TopLeft, box.Rounded.Horizontal, title)
+	}
+	for _, title := range []string{"transfers", "status"} {
+		if !strings.Contains(got, label(title)) {
+			t.Errorf("%q should be on screen: shown_boxes named it", title)
+		}
+	}
+	for _, title := range []string{"bandwidth", "files"} {
+		if strings.Contains(got, label(title)) {
+			t.Errorf("%q should be hidden: shown_boxes did not name it", title)
+		}
+	}
+}
+
+// A shown_boxes value naming nothing real -- a typo-only file, say -- is the
+// same "nothing survived" question the terminal-too-narrow case already
+// answers, asked from startup instead of from a resize.
+func TestShownBoxesNamingNothingRealCollapsesToDense(t *testing.T) {
+	m := New(nil, Options{Preset: 1, ShownBoxes: "bogus"}, nil)
+	m.state = busyModel(time.Unix(1787433722, 0)).state
+	m.width, m.height = 120, 40
+
+	if strings.ContainsRune(stripStyles(m.View()), '╭') {
+		t.Error("shown_boxes naming nothing real should collapse to the dense view")
 	}
 }
 

@@ -436,12 +436,15 @@ Any new collector should follow the same shape: a real constructor plus an `...A
   same story until #11 gave it something narrower to name than btop's own box arrangement: with two
   real views to start on, `-p, --preset 0|1` is registered, and it takes only those two values because
   those are the ones that exist. Short flags mirror btop's meaning where it applies. The same rule
-  binds `internal/config`: `shown_boxes`, `presets` and `vim_keys` get no `Config` field to be parsed
-  into and shelved, and neither does `preset` -- it stays flag-only because a key of that name would
-  collide with btop's own `presets` before #7 builds what that one means. A key read into a field that
-  nothing consumes is the same lie as a flag, and harder to notice in a file than at a prompt.
-  (Unrecognised keys are still skipped in silence, for the forward-compatibility reason below — that
-  is a cost of the design, not a warning system.)
+  binds `internal/config`: `presets` and `vim_keys` get no `Config` field to be parsed into and
+  shelved, and neither does `preset` -- it stays flag-only because a key of that name would collide
+  with btop's own `presets` before #7 builds what that one means. `shown_boxes` was on this list too
+  until #22 gave it a consumer: it names which of the framed view's panels to start with, parsed but
+  not validated in `internal/config` on the same terms as `graph_symbol`, and interpreted -- empty
+  means every panel, an unrecognised name is dropped -- in `internal/ui`, which is where that
+  vocabulary actually lives. A key read into a field that nothing consumes is the same lie as a flag,
+  and harder to notice in a file than at a prompt. (Unrecognised keys are still skipped in silence,
+  for the forward-compatibility reason below — that is a cost of the design, not a warning system.)
 - **No new dependencies without a real reason.** Graphing and theme parsing are hand-written
   precisely because the requirement is narrower than any library's. `github.com/charmbracelet/x/term`
   is a direct require and was not a new dependency when it became one: bubbletea already links it to

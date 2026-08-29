@@ -34,6 +34,11 @@ type Options struct {
 	// Preset is the view to start in: 0 for the dense one, 1 for the framed
 	// one -- mirrored by Model.preset, which p then alternates at runtime.
 	Preset int
+	// ShownBoxes is internal/config's raw shown_boxes value, carried through
+	// unresolved the same way GraphSymbol is: interpreting it (empty means
+	// every panel, an unrecognised name is dropped) is parseShownBoxes's job,
+	// not this package's caller's.
+	ShownBoxes string
 }
 
 // Model is the root Bubble Tea model.
@@ -50,6 +55,12 @@ type Model struct {
 	// one. btop's own numbering, and the two values are the two that exist --
 	// which is the condition #7 set for the flag that names them.
 	preset int
+
+	// shown is which framed-view panels are candidates for the screen right
+	// now. Seeded once from Options.ShownBoxes at construction; a future
+	// session-only digit toggle mutates it from here, never from the
+	// configuration it was seeded from.
+	shown panelSet
 
 	// peakRate is the largest throughput seen so far, used as the upper
 	// bound when grading a rate along the gradient. It auto-scales like
@@ -92,6 +103,7 @@ func New(results <-chan collect.Result, opts Options, cancel context.CancelFunc)
 		results: results,
 		now:     time.Now(),
 		preset:  opts.Preset,
+		shown:   parseShownBoxes(opts.ShownBoxes),
 		graphs:  newGraphStore(opts.GraphSymbol, sparkCellsFor(effectiveWidth(0))),
 		cancel:  cancel,
 	}
@@ -202,7 +214,7 @@ func (m Model) graphCells() int {
 	if m.preset == 1 {
 		// The demand does not change which panel is where, only how tall
 		// each one is, and this only wants the bandwidth panel's width.
-		if plan := planLayout(m.width, m.height, panelRows{}); !plan.dense {
+		if plan := planLayout(m.width, m.height, panelRows{}, m.shown); !plan.dense {
 			for _, p := range plan.panels {
 				if p.kind == panelBandwidth {
 					// What the frame leaves, less the arrow's

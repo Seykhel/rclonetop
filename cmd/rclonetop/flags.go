@@ -46,10 +46,17 @@ type options struct {
 	// preset is the view to start in: 0 for the dense one, 1 for the framed
 	// one -- the two values that exist, which is #7's own condition for
 	// registering this flag at all (see #7 and #11). No configuration key:
-	// btop's own preset is a saved box arrangement, `presets`/`shown_boxes`
-	// in #7's still-unbuilt sense, and a `preset` key here would collide
-	// with that meaning before it exists.
+	// btop's own preset is a saved box arrangement, still unbuilt here even
+	// though shown_boxes (below) now is, and a `preset` key would collide
+	// with that saved-arrangement meaning before it exists.
 	preset int
+
+	// shownBoxes has no flag of its own -- unlike clockLayout, not because
+	// it is fiddly to type, but because it names runtime UI state: the
+	// framed view's own digit keys are what change it during a session, and
+	// a flag would only duplicate that for the rare case of starting with
+	// something already hidden.
+	shownBoxes string
 
 	// ttyTheme is the answer to "should the eight-colour built-in theme replace
 	// whatever was named", which --tty and --theme can both speak to. Settled
@@ -204,6 +211,7 @@ func applyConfig(o options, cfg config.Config) options {
 		o.lowColor = !cfg.TrueColor
 	}
 	o.clockLayout = cfg.ClockLayout
+	o.shownBoxes = cfg.ShownBoxes
 
 	// Both of these read o.tty, so they have to run after it has been settled
 	// just above -- they want the resolved answer to "is this a console", not
