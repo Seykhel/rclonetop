@@ -79,9 +79,7 @@ clock_layout = "15:04:05"
 #* status", space separated. Leave empty to show every panel that exists --
 #* which is also what a file written before a later version added a panel
 #* keeps meaning, rather than freezing on today's four. A name this version
-#* does not recognise is dropped rather than refused. Toggle a panel for the
-#* rest of a session with its own digit key in the framed view; that choice
-#* is never written back here.
+#* does not recognise is dropped rather than refused.
 shown_boxes = ""
 `
 

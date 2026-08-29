@@ -71,9 +71,9 @@ func (k panelKind) String() string {
 // toggles the box. Drawing one that does nothing is this repo's "a flag accepted
 // and ignored is worse than one rejected", moved from the command line to the
 // screen, where it is harder to notice and easier to believe. shown_boxes now
-// exists (see the shown type below) and filters which panels are candidates at
-// all; the digit itself, and the runtime toggle it drives, is the ticket that
-// gives this field a reason to be here.
+// exists (see panelSet below) and filters which panels are candidates at all;
+// the digit itself, and the runtime toggle it drives, is the ticket that gives
+// this field a reason to be here.
 type panelSpec struct {
 	kind    panelKind
 	title   string
@@ -98,17 +98,17 @@ var panels = [...]panelSpec{
 	panelStatus: {panelStatus, "status", "cpu_box", 5, false},
 }
 
-// shown is which panels are candidates for the framed view right now --
+// panelSet is which panels are candidates for the framed view right now --
 // internal/config's shown_boxes, resolved. It says nothing about whether a
 // member panel actually fits: fit still drops one for lack of room exactly
 // as it always has, and a panel that was never a member is a different
 // reason for the same nothing, kept apart from that one by candidates below.
-type shown [len(panels)]bool
+type panelSet [len(panels)]bool
 
 // allShown is every panel a candidate, which is shown_boxes left unset and
 // every test in this package written before it existed.
-func allShown() shown {
-	var s shown
+func allShown() panelSet {
+	var s panelSet
 	for k := range s {
 		s[k] = true
 	}
@@ -128,11 +128,11 @@ func allShown() shown {
 // unrecognised graph symbol between internal/config and internal/ui/graph.
 // Order and repeats in the string carry no meaning -- membership is all
 // candidates asks.
-func parseShownBoxes(raw string) shown {
+func parseShownBoxes(raw string) panelSet {
 	if raw == "" {
 		return allShown()
 	}
-	var s shown
+	var s panelSet
 	for _, token := range strings.Fields(raw) {
 		for k, p := range panels {
 			if p.title == token {
@@ -143,14 +143,14 @@ func parseShownBoxes(raw string) shown {
 	return s
 }
 
-// candidates filters order down to the panels sh actually shows, before fit
-// ever sees the rest. A panel dropped here never reaches fit, so it can
+// candidates filters order down to the panels shown actually shows, before
+// fit ever sees the rest. A panel dropped here never reaches fit, so it can
 // never end up in fit's own dropped list -- "hidden by choice" and "dropped
 // for lack of room" stay two different reasons for the same nothing.
-func candidates(order []panelKind, sh shown) []panelKind {
+func candidates(order []panelKind, shown panelSet) []panelKind {
 	out := make([]panelKind, 0, len(order))
 	for _, k := range order {
-		if sh[k] {
+		if shown[k] {
 			out = append(out, k)
 		}
 	}
@@ -206,16 +206,16 @@ type panelRows [len(panels)]int
 // against a hand-written minimum, and a terminal seven rows tall passed it and
 // then dropped every panel in turn, leaving a framed view with nothing in it.
 // "Did anything survive" is the same question asked where the answer is known.
-func planLayout(width, height int, want panelRows, sh shown) layout {
+func planLayout(width, height int, want panelRows, shown panelSet) layout {
 	w, rows := effectiveWidth(width), effectiveHeight(height)-chromeRows
 
 	if w >= twoColumnsFrom {
-		if l, ok := planColumns(w, rows, want, sh); ok {
+		if l, ok := planColumns(w, rows, want, shown); ok {
 			return l
 		}
 	}
 	if w >= denseBelow {
-		if keep, dropped := fit(candidates(readingOrder, sh), rows); len(keep) > 0 {
+		if keep, dropped := fit(candidates(readingOrder, shown), rows); len(keep) > 0 {
 			return layout{
 				panels:  packColumn(keep, 0, headerRows, w, rows, want),
 				dropped: dropped,
@@ -229,9 +229,9 @@ func planLayout(width, height int, want panelRows, sh shown) layout {
 // having. A column that kept nothing is half a screen of nothing: the panels
 // that survived are better off spread across the whole width, which is the
 // arrangement one step down.
-func planColumns(w, rows int, want panelRows, sh shown) (layout, bool) {
-	leftKeep, leftGone := fit(candidates(leftColumn, sh), rows)
-	rightKeep, rightGone := fit(candidates(rightColumn, sh), rows)
+func planColumns(w, rows int, want panelRows, shown panelSet) (layout, bool) {
+	leftKeep, leftGone := fit(candidates(leftColumn, shown), rows)
+	rightKeep, rightGone := fit(candidates(rightColumn, shown), rows)
 	if len(leftKeep) == 0 || len(rightKeep) == 0 {
 		return layout{}, false
 	}

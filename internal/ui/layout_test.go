@@ -327,7 +327,7 @@ func TestAHiddenPanelIsNeitherPlacedNorDropped(t *testing.T) {
 // terminal too narrow for any of them: did anything survive. Answered the
 // same way, with no new branch.
 func TestAnEmptyShownSetIsTheDenseView(t *testing.T) {
-	l := planLayout(120, 40, panelRows{}, shown{})
+	l := planLayout(120, 40, panelRows{}, panelSet{})
 	if !l.dense {
 		t.Error("every panel hidden should fall back to the dense view")
 	}
@@ -347,17 +347,17 @@ func TestParseShownBoxesEmptyMeansEverything(t *testing.T) {
 // refusing to start.
 func TestParseShownBoxesDropsAnUnrecognisedName(t *testing.T) {
 	got := parseShownBoxes("transfers remotes status")
-	want := shown{panelTransfers: true, panelStatus: true}
+	want := panelSet{panelTransfers: true, panelStatus: true}
 	if got != want {
 		t.Errorf("parseShownBoxes = %v, want %v", got, want)
 	}
 }
 
-// shown is membership, not a sequence: what order the names arrived in, and
-// how many times, says nothing planLayout ever asks.
+// panelSet is membership, not a sequence: what order the names arrived in,
+// and how many times, says nothing planLayout ever asks.
 func TestParseShownBoxesIgnoresOrderAndRepeats(t *testing.T) {
 	got := parseShownBoxes("status status transfers")
-	want := shown{panelTransfers: true, panelStatus: true}
+	want := panelSet{panelTransfers: true, panelStatus: true}
 	if got != want {
 		t.Errorf("parseShownBoxes = %v, want %v", got, want)
 	}

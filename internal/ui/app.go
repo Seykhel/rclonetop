@@ -60,7 +60,7 @@ type Model struct {
 	// now. Seeded once from Options.ShownBoxes at construction; a future
 	// session-only digit toggle mutates it from here, never from the
 	// configuration it was seeded from.
-	shown shown
+	shown panelSet
 
 	// peakRate is the largest throughput seen so far, used as the upper
 	// bound when grading a rate along the gradient. It auto-scales like
