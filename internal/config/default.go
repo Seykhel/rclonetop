@@ -74,6 +74,15 @@ truecolor = True
 #* strftime string; the name differs here because the value does, and "%X" is
 #* refused with that explanation rather than printed literally.
 clock_layout = "15:04:05"
+
+#* Which framed-view panels to start with, out of "transfers bandwidth files
+#* status", space separated. Leave empty to show every panel that exists --
+#* which is also what a file written before a later version added a panel
+#* keeps meaning, rather than freezing on today's four. A name this version
+#* does not recognise is dropped rather than refused. Toggle a panel for the
+#* rest of a session with its own digit key in the framed view; that choice
+#* is never written back here.
+shown_boxes = ""
 `
 
 // DefaultFile returns the commented default configuration, stamped with the

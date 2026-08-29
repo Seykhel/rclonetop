@@ -186,6 +186,7 @@ func run() error {
 		GraphSymbol: symbol,
 		ClockLayout: flags.clockLayout,
 		Preset:      flags.preset,
+		ShownBoxes:  flags.shownBoxes,
 		Host:        host,
 	}, cancel)
 

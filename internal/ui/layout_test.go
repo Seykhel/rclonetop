@@ -23,7 +23,7 @@ func TestATerminalWithNoRoomForFramesAsksForTheDenseView(t *testing.T) {
 		{"before the terminal has said anything", 0, 0, false},
 	}
 	for _, c := range cases {
-		if got := planLayout(c.width, c.height, panelRows{}).dense; got != c.want {
+		if got := planLayout(c.width, c.height, panelRows{}, allShown()).dense; got != c.want {
 			t.Errorf("%s (%dx%d): dense = %v, want %v", c.name, c.width, c.height, got, c.want)
 		}
 	}
@@ -56,7 +56,7 @@ func same(a, b []panelKind) bool {
 // which files, and whether anything is broken.
 func TestOneColumnStacksEveryPanelFullWidth(t *testing.T) {
 	const width, height = 80, 30
-	l := planLayout(width, height, panelRows{})
+	l := planLayout(width, height, panelRows{}, allShown())
 
 	want := []panelKind{panelTransfers, panelBandwidth, panelFiles, panelStatus}
 	if got := kinds(l); !same(got, want) {
@@ -100,7 +100,7 @@ func TestAPanelThatDoesNotFitIsDroppedWhole(t *testing.T) {
 		{"a twelve row shell", 80, 12, []panelKind{panelTransfers}, []panelKind{panelFiles, panelBandwidth, panelStatus}},
 	}
 	for _, c := range cases {
-		l := planLayout(c.width, c.height, panelRows{})
+		l := planLayout(c.width, c.height, panelRows{}, allShown())
 		if got := kinds(l); !same(got, c.want) {
 			t.Errorf("%s: panels = %v, want %v", c.name, got, c.want)
 		}
@@ -126,7 +126,7 @@ func TestAPanelThatDoesNotFitIsDroppedWhole(t *testing.T) {
 // moving on the left, how it is going and whether it is healthy on the right.
 func TestAWideTerminalSplitsIntoTwoColumns(t *testing.T) {
 	const width, height = 140, 40
-	l := planLayout(width, height, panelRows{})
+	l := planLayout(width, height, panelRows{}, allShown())
 
 	left, right := map[panelKind]placement{}, map[panelKind]placement{}
 	for _, p := range l.panels {
@@ -189,7 +189,7 @@ func TestTheSecondColumnArrivesAtItsOwnWidth(t *testing.T) {
 		{twoColumnsFrom, 2},
 	} {
 		columns := map[int]bool{}
-		for _, p := range planLayout(c.width, 40, panelRows{}).panels {
+		for _, p := range planLayout(c.width, 40, panelRows{}, allShown()).panels {
 			columns[p.x] = true
 		}
 		if len(columns) != c.want {
@@ -205,7 +205,7 @@ func TestTheSecondColumnArrivesAtItsOwnWidth(t *testing.T) {
 func TestEverySizeIsCoveredExactlyOnce(t *testing.T) {
 	for _, width := range []int{10, 15, 24, 40, 60, 61, 80, 99, 100, 120, 190} {
 		for _, height := range []int{3, 7, 8, 12, 24, 25, 40, 60} {
-			l := planLayout(width, height, panelRows{})
+			l := planLayout(width, height, panelRows{}, allShown())
 			if l.dense {
 				if len(l.panels) != 0 {
 					t.Errorf("%dx%d: the dense fallback still placed %d panels", width, height, len(l.panels))
@@ -259,7 +259,7 @@ func TestAPanelGetsTheRowsItSaysItHas(t *testing.T) {
 
 	var want panelRows
 	want[panelStatus] = 9 // a unit, a timer, a sync pair, some caches
-	l := planLayout(width, height, want)
+	l := planLayout(width, height, want, allShown())
 
 	got := map[panelKind]placement{}
 	for _, p := range l.panels {
@@ -285,10 +285,80 @@ func TestAPanelGetsTheRowsItSaysItHas(t *testing.T) {
 
 	// Asking for more than the column holds is not an error, it is a "+N
 	// more": the demand is a claim about content, not a reservation.
-	huge := planLayout(width, height, panelRows{panelStatus: 500})
+	huge := planLayout(width, height, panelRows{panelStatus: 500}, allShown())
 	for _, p := range huge.panels {
 		if p.h > rows {
 			t.Errorf("%v claimed %d rows of a %d-row column", p.kind, p.h, rows)
 		}
+	}
+}
+
+// A panel outside shown_boxes is a third reason for the same nothing on
+// screen, and it has to stay a third reason: neither placed, nor counted
+// among the ones fit gave up for lack of room -- that list is for a panel
+// that wanted to be there and did not fit, not one that was never asked.
+func TestAHiddenPanelIsNeitherPlacedNorDropped(t *testing.T) {
+	const width, height = 80, 30
+	sh := allShown()
+	sh[panelFiles] = false
+
+	l := planLayout(width, height, panelRows{}, sh)
+
+	want := []panelKind{panelTransfers, panelBandwidth, panelStatus}
+	if got := kinds(l); !same(got, want) {
+		t.Fatalf("panels = %v, want %v", got, want)
+	}
+	if len(l.dropped) != 0 {
+		t.Errorf("dropped = %v, want none -- files was hidden, not squeezed out", l.dropped)
+	}
+
+	// The room files would have taken went to the panels that remain,
+	// exactly as it would have if fit had dropped it for lack of space.
+	y := headerRows
+	for _, p := range l.panels {
+		y += p.h
+	}
+	if want := height - footerRows; y != want {
+		t.Errorf("the panels end at row %d, want %d -- the freed room was not repacked", y, want)
+	}
+}
+
+// Every panel hidden is the same question planLayout already answers for a
+// terminal too narrow for any of them: did anything survive. Answered the
+// same way, with no new branch.
+func TestAnEmptyShownSetIsTheDenseView(t *testing.T) {
+	l := planLayout(120, 40, panelRows{}, shown{})
+	if !l.dense {
+		t.Error("every panel hidden should fall back to the dense view")
+	}
+	if len(l.panels) != 0 {
+		t.Errorf("the dense fallback still placed %d panels", len(l.panels))
+	}
+}
+
+func TestParseShownBoxesEmptyMeansEverything(t *testing.T) {
+	if got, want := parseShownBoxes(""), allShown(); got != want {
+		t.Errorf("parseShownBoxes(\"\") = %v, want %v", got, want)
+	}
+}
+
+// internal/config passes shown_boxes through unvalidated; here is where an
+// unrecognised name is actually handled, by dropping it rather than
+// refusing to start.
+func TestParseShownBoxesDropsAnUnrecognisedName(t *testing.T) {
+	got := parseShownBoxes("transfers remotes status")
+	want := shown{panelTransfers: true, panelStatus: true}
+	if got != want {
+		t.Errorf("parseShownBoxes = %v, want %v", got, want)
+	}
+}
+
+// shown is membership, not a sequence: what order the names arrived in, and
+// how many times, says nothing planLayout ever asks.
+func TestParseShownBoxesIgnoresOrderAndRepeats(t *testing.T) {
+	got := parseShownBoxes("status status transfers")
+	want := shown{panelTransfers: true, panelStatus: true}
+	if got != want {
+		t.Errorf("parseShownBoxes = %v, want %v", got, want)
 	}
 }
