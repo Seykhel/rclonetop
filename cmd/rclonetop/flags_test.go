@@ -20,6 +20,9 @@ func TestParseFlagsDefaults(t *testing.T) {
 	if o.graphSymbol != "" {
 		t.Errorf("graphSymbol = %q, want empty so the UI picks its own default", o.graphSymbol)
 	}
+	if o.preset != 0 {
+		t.Errorf("preset = %d, want 0, the dense view", o.preset)
+	}
 }
 
 func TestParseFlagsShortAndLongForms(t *testing.T) {
@@ -46,6 +49,11 @@ func TestParseFlagsRejectsBadValues(t *testing.T) {
 		// wondering why the graphs did not change.
 		{"unknown graph symbol", []string{"--graph-symbol", "brialle"}},
 		{"unknown flag", []string{"--nonsense"}},
+		// Only 0 and 1 are views that exist; anything else is a typo, not a
+		// later version's value -- there is no runtime file to be forward
+		// compatible with here.
+		{"preset out of range", []string{"--preset", "2"}},
+		{"preset not a number", []string{"--preset", "one"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +72,18 @@ func TestParseFlagsAcceptsEveryGraphSymbol(t *testing.T) {
 		}
 		if o.graphSymbol != sym {
 			t.Errorf("graphSymbol = %q, want %q", o.graphSymbol, sym)
+		}
+	}
+}
+
+func TestParseFlagsAcceptsEveryPreset(t *testing.T) {
+	for _, args := range [][]string{{"-p", "1"}, {"--preset", "1"}} {
+		o, err := parseFlags(args)
+		if err != nil {
+			t.Errorf("parseFlags(%v): %v", args, err)
+		}
+		if o.preset != 1 {
+			t.Errorf("parseFlags(%v): preset = %d, want 1", args, o.preset)
 		}
 	}
 }
