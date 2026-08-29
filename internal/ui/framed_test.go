@@ -95,10 +95,8 @@ func TestTheFramedViewNeverOutgrowsItsTerminal(t *testing.T) {
 }
 
 // btop writes the name of a box into its own top edge, and a panel the layout
-// dropped names nothing, because it is not there to be named.
-//
-// No digit beside it: btop's digit toggles the box, and until something here
-// does, drawing one is the screen's version of a flag accepted and ignored.
+// dropped names nothing, because it is not there to be named. Its hotkey digit
+// rides along with the name now that pressing it does something.
 func TestEveryPlannedPanelIsNamedInItsTopEdge(t *testing.T) {
 	m := busyModel(time.Unix(1787433722, 0))
 
@@ -109,10 +107,11 @@ func TestEveryPlannedPanelIsNamedInItsTopEdge(t *testing.T) {
 
 		// The top edge, not the word: "files" also appears in
 		// "1158/4667 files" and in the cache line, so a bare title
-		// would find a panel that was never drawn.
+		// would find a panel that was never drawn. The hotkey digit is
+		// part of that edge now too.
 		label := func(k panelKind) string {
-			return fmt.Sprintf("%c%c %s ",
-				box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].title)
+			return fmt.Sprintf("%c%c %d %s ",
+				box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
 		}
 		for _, p := range plan.panels {
 			if want := label(p.kind); !strings.Contains(got, want) {
@@ -175,17 +174,18 @@ func TestOptionsShownBoxesFiltersTheStartingView(t *testing.T) {
 	m.width, m.height = 120, 40
 
 	got := stripStyles(m.renderFramed())
-	label := func(title string) string {
-		return fmt.Sprintf("%c%c %s ", box.Rounded.TopLeft, box.Rounded.Horizontal, title)
+	label := func(k panelKind) string {
+		return fmt.Sprintf("%c%c %d %s ",
+			box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
 	}
-	for _, title := range []string{"transfers", "status"} {
-		if !strings.Contains(got, label(title)) {
-			t.Errorf("%q should be on screen: shown_boxes named it", title)
+	for _, k := range []panelKind{panelTransfers, panelStatus} {
+		if !strings.Contains(got, label(k)) {
+			t.Errorf("%q should be on screen: shown_boxes named it", panels[k].title)
 		}
 	}
-	for _, title := range []string{"bandwidth", "files"} {
-		if strings.Contains(got, label(title)) {
-			t.Errorf("%q should be hidden: shown_boxes did not name it", title)
+	for _, k := range []panelKind{panelBandwidth, panelFiles} {
+		if strings.Contains(got, label(k)) {
+			t.Errorf("%q should be hidden: shown_boxes did not name it", panels[k].title)
 		}
 	}
 }
@@ -200,6 +200,71 @@ func TestShownBoxesNamingNothingRealCollapsesToDense(t *testing.T) {
 
 	if strings.ContainsRune(stripStyles(m.View()), '╭') {
 		t.Error("shown_boxes naming nothing real should collapse to the dense view")
+	}
+}
+
+// Pressing a panel's own digit in the framed view hides it, and pressing it
+// again brings it back -- the whole mechanism, one panel at a time.
+func TestADigitTogglesAPanelOffAndOn(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.preset = 1
+
+	label := func(k panelKind) string {
+		return fmt.Sprintf("%c%c %d %s ",
+			box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
+	}
+
+	if !strings.Contains(stripStyles(m.renderFramed()), label(panelFiles)) {
+		t.Fatal("files should be on screen before any toggle")
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = next.(Model)
+	if strings.Contains(stripStyles(m.renderFramed()), label(panelFiles)) {
+		t.Error("3 should have hidden files")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = next.(Model)
+	if !strings.Contains(stripStyles(m.renderFramed()), label(panelFiles)) {
+		t.Error("3 should have shown files again")
+	}
+}
+
+// The digit keys name a box, and in the dense view there is no box for them
+// to name -- pressing one there must not quietly change state a switch to
+// the framed view would then reveal.
+func TestADigitInTheDenseViewDoesNothing(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.preset = 0
+	before := m.shown
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = next.(Model)
+	if m.shown != before {
+		t.Error("a digit pressed in the dense view should not change panel membership")
+	}
+}
+
+// Hiding every panel is the same "nothing survived" question a narrow
+// terminal already answers, reached this time by four key presses instead of
+// a resize -- and showing one again undoes it.
+func TestTogglingEveryPanelOffCollapsesToDense(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.preset = 1
+
+	for _, r := range []rune{'1', '2', '3', '4'} {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	if strings.ContainsRune(stripStyles(m.View()), '╭') {
+		t.Error("every panel hidden should collapse to the dense view")
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = next.(Model)
+	if !strings.ContainsRune(stripStyles(m.View()), '╭') {
+		t.Error("showing a panel again should restore the framed view")
 	}
 }
 

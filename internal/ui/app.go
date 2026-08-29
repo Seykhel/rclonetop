@@ -183,6 +183,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// one the user just left draws the other blank down its right
 		// half, or throws away history it was about to need.
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
+	case "1", "2", "3", "4":
+		// A box's digit is fixed to its kind, not to wherever it currently
+		// sits, so it means the same thing whether or not this key press
+		// reaches a screen with that box on it right now. There is no box
+		// in the dense view for it to name, so it does nothing there.
+		if m.preset != 1 {
+			return m, nil
+		}
+		if k, ok := panelForHotkey(int(msg.String()[0] - '0')); ok {
+			m.shown[k] = !m.shown[k]
+			// Hiding or showing a panel changes what graphCells reports
+			// for the bandwidth panel's width, the same reason p and a
+			// window resize both already call this.
+			m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
+		}
 	case "+", "=":
 		m.opts.UpdateMS = clampInterval(m.opts.UpdateMS / 2)
 	case "-", "_":
