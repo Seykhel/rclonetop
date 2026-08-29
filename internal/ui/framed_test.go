@@ -59,6 +59,15 @@ func busyModel(now time.Time) Model {
 	return m
 }
 
+// panelTopLabel is the top edge a panel draws, up to its title: the border,
+// its hotkey digit and the name -- "files" also appears in "1158/4667 files"
+// and in the cache line, so a bare title would find a panel that was never
+// drawn.
+func panelTopLabel(k panelKind) string {
+	return fmt.Sprintf("%c%c %d %s ",
+		box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
+}
+
 // The property the dense view already had and paid for once (2707cc4): whatever
 // the arithmetic inside does, nothing reaches the terminal wider or taller than
 // the terminal is. A line that wraps corrupts the layout of every line below it,
@@ -105,21 +114,13 @@ func TestEveryPlannedPanelIsNamedInItsTopEdge(t *testing.T) {
 		got := stripStyles(m.renderFramed())
 		plan := planLayout(size[0], size[1], panelRows{}, allShown())
 
-		// The top edge, not the word: "files" also appears in
-		// "1158/4667 files" and in the cache line, so a bare title
-		// would find a panel that was never drawn. The hotkey digit is
-		// part of that edge now too.
-		label := func(k panelKind) string {
-			return fmt.Sprintf("%c%c %d %s ",
-				box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
-		}
 		for _, p := range plan.panels {
-			if want := label(p.kind); !strings.Contains(got, want) {
+			if want := panelTopLabel(p.kind); !strings.Contains(got, want) {
 				t.Errorf("%dx%d: no panel labelled %q on screen", size[0], size[1], want)
 			}
 		}
 		for _, k := range plan.dropped {
-			if strings.Contains(got, label(k)) {
+			if strings.Contains(got, panelTopLabel(k)) {
 				t.Errorf("%dx%d: %v was dropped and drawn anyway", size[0], size[1], k)
 			}
 		}
@@ -166,25 +167,20 @@ func TestOptionsPresetChoosesTheStartingView(t *testing.T) {
 }
 
 // Options.ShownBoxes is shown_boxes resolved once at construction: the panels
-// it names are what the framed view has to work with for the run, until a
-// runtime digit toggle exists to change that.
+// it names are what a session starts with, before any digit toggles it.
 func TestOptionsShownBoxesFiltersTheStartingView(t *testing.T) {
 	m := busyModel(time.Unix(1787433722, 0))
 	m.shown = parseShownBoxes("transfers status")
 	m.width, m.height = 120, 40
 
 	got := stripStyles(m.renderFramed())
-	label := func(k panelKind) string {
-		return fmt.Sprintf("%c%c %d %s ",
-			box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
-	}
 	for _, k := range []panelKind{panelTransfers, panelStatus} {
-		if !strings.Contains(got, label(k)) {
+		if !strings.Contains(got, panelTopLabel(k)) {
 			t.Errorf("%q should be on screen: shown_boxes named it", panels[k].title)
 		}
 	}
 	for _, k := range []panelKind{panelBandwidth, panelFiles} {
-		if strings.Contains(got, label(k)) {
+		if strings.Contains(got, panelTopLabel(k)) {
 			t.Errorf("%q should be hidden: shown_boxes did not name it", panels[k].title)
 		}
 	}
@@ -209,24 +205,19 @@ func TestADigitTogglesAPanelOffAndOn(t *testing.T) {
 	m := busyModel(time.Unix(1787433722, 0))
 	m.preset = 1
 
-	label := func(k panelKind) string {
-		return fmt.Sprintf("%c%c %d %s ",
-			box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
-	}
-
-	if !strings.Contains(stripStyles(m.renderFramed()), label(panelFiles)) {
+	if !strings.Contains(stripStyles(m.renderFramed()), panelTopLabel(panelFiles)) {
 		t.Fatal("files should be on screen before any toggle")
 	}
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = next.(Model)
-	if strings.Contains(stripStyles(m.renderFramed()), label(panelFiles)) {
+	if strings.Contains(stripStyles(m.renderFramed()), panelTopLabel(panelFiles)) {
 		t.Error("3 should have hidden files")
 	}
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = next.(Model)
-	if !strings.Contains(stripStyles(m.renderFramed()), label(panelFiles)) {
+	if !strings.Contains(stripStyles(m.renderFramed()), panelTopLabel(panelFiles)) {
 		t.Error("3 should have shown files again")
 	}
 }
@@ -265,6 +256,31 @@ func TestTogglingEveryPanelOffCollapsesToDense(t *testing.T) {
 	m = next.(Model)
 	if !strings.ContainsRune(stripStyles(m.View()), '╭') {
 		t.Error("showing a panel again should restore the framed view")
+	}
+}
+
+// A toggle changes which panel gives the bandwidth graph its width -- hiding
+// bandwidth itself removes it from the screen outright -- so it has to
+// resize the graph history the same way p and a window resize already do, or
+// the history stays sized for a panel that no longer decides its width.
+func TestAToggleResizesTheGraphHistory(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.preset = 1
+	// As if a WindowSizeMsg had already arrived, which is what seeds the
+	// history for whichever panel is actually on screen.
+	m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
+	before := m.graphs.cells
+
+	// Bandwidth's own hotkey.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = next.(Model)
+
+	want := m.graphCells()
+	if before == want {
+		t.Fatal("hiding bandwidth should have changed what graphCells reports -- fix the fixture, not the assertion below")
+	}
+	if m.graphs.cells != want {
+		t.Errorf("graphs.cells = %d after hiding bandwidth, want %d: the toggle did not resize", m.graphs.cells, want)
 	}
 }
 

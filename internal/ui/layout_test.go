@@ -362,3 +362,34 @@ func TestParseShownBoxesIgnoresOrderAndRepeats(t *testing.T) {
 		t.Errorf("parseShownBoxes = %v, want %v", got, want)
 	}
 }
+
+// The literal mapping #23 asks for, pinned against the numbers rather than
+// against panels[k].hotkey itself -- a test that read the table back at
+// itself would pass just as well with every digit renumbered.
+func TestPanelHotkeysAreFixedInReadingOrder(t *testing.T) {
+	want := map[panelKind]int{
+		panelTransfers: 1,
+		panelBandwidth: 2,
+		panelFiles:     3,
+		panelStatus:    4,
+	}
+	for k, hotkey := range want {
+		if got := panels[k].hotkey; got != hotkey {
+			t.Errorf("%v hotkey = %d, want %d", k, got, hotkey)
+		}
+	}
+}
+
+// panelForHotkey is candidates' mirror image: given the digit, name the
+// panel. A digit with no panel -- 0, or anything outside 1-4 -- names none.
+func TestPanelForHotkeyMatchesTheTable(t *testing.T) {
+	for _, k := range []panelKind{panelTransfers, panelBandwidth, panelFiles, panelStatus} {
+		got, ok := panelForHotkey(panels[k].hotkey)
+		if !ok || got != k {
+			t.Errorf("panelForHotkey(%d) = %v, %v; want %v, true", panels[k].hotkey, got, ok, k)
+		}
+	}
+	if _, ok := panelForHotkey(0); ok {
+		t.Error("panelForHotkey(0) should name no panel")
+	}
+}
