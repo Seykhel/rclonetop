@@ -1,0 +1,475 @@
+# AGENTS.md
+
+This file is the single source of truth for coding-agent guidance in this repository.
+It applies to Codex, Claude Code, and other repository-aware agents.
+
+## What this is
+
+`rclonetop` is a read-only terminal monitor for rclone, styled after btop++. Go 1.25, Bubble Tea +
+lipgloss, Linux only (throughput comes from `/proc/<pid>/io`). See `README.md` for the user-facing
+description, the flag table and the theme search order.
+
+## Commands
+
+```sh
+go build ./...
+go vet ./...
+go test -race ./...                                   # always -race, see below
+go test ./internal/collect -run TestSystemdCollect    # a single test
+go build -o bin/rclonetop ./cmd/rclonetop && ./bin/rclonetop -d
+```
+
+`-race` is not optional: facts are handed between collectors across goroutine boundaries —
+`Procs.OnProcesses` → `Systemd.NoteProcesses` and `Logs.NoteProcesses`, `Systemd.OnLogFiles` →
+`Logs.NoteUnitLogs`, `Logs.OnPaths` → `Bisync.NotePaths`. `TestConcurrentNoteAndCollect` and
+`TestConcurrentNotePathsAndCollect` only fail under the detector.
+
+Nor may a fixture depend on the wall clock. A journal fixture with a hard-coded epoch passed for a
+day and then began failing on the clock rather than on the code, because retention drops an entry
+older than `errorRetention`; anything asserting that an error is *kept* builds its timestamp from
+`time.Now` (`recentEpoch` in `systemd_test.go`).
+
+`-d` runs every collector twice, 500 ms apart, prints what each one saw and exits. It is the fastest
+way to inspect collector output without a TTY, and it is what users are asked to paste in bug
+reports. It opens with a `== display` block — colour profile, theme, graph symbol, `TERM` and
+`COLORTERM` — because "the colours look washed out" is the one complaint a collector dump cannot
+otherwise answer. It also says when stdout is not a terminal, and that caveat is load-bearing:
+termenv correctly reports `Ascii` for a pipe, and a user pasting `-d` into a bug report has
+*always* piped it, so the bare profile line would confidently answer the wrong question.
+
+Because of that it is the one caller that survives a configuration file it cannot parse:
+`main` warns on stderr and carries on with the defaults rather than returning the error, since a host
+whose conf is broken is exactly the sort that gets reported and the diagnostic must not depend on the
+thing being diagnosed.
+
+`internal/ui.Version` holds the version string; there is no release tooling in the tree yet. CI is
+`.github/workflows/ci.yml`: a single job running gofmt, `go build`, `go vet` and
+`go test -race -count=1`, with the Go version read from `go.mod` so the two cannot drift. It is the
+same four commands as above, which is the point — a change that passes locally passes there.
+`/bin` and `/dist` are gitignored.
+
+## Changes go through a pull request
+
+**`main` is never pushed to directly.** Branch, push the branch, open a PR:
+
+```sh
+git switch -c <topic>
+gh pr create --fill                 # see docs/agents/issue-tracker.md for the gh conventions
+```
+
+CI triggers on `pull_request` as well as on pushes to `main`, so the checks are the same either way
+— but on a branch they run *before* the commit becomes one somebody may bisect, which is the whole
+reason the rule exists.
+
+Committing to `main` by mistake costs nothing as long as it has not been pushed, and it is worth
+knowing the way out rather than rebuilding the work:
+
+```sh
+git switch -c <topic>               # the branch now holds the commits
+git branch -f main origin/main      # and main goes back to where it was
+```
+
+## Architecture
+
+Three layers, one direction of flow:
+
+```
+internal/collect/*  →  model.Snapshot  →  model.State  →  model.View  →  internal/ui  →  terminal
+   (goroutines)         (per source)       (per source)    (joined)      (Bubble Tea)
+```
+
+**Collectors** (`internal/collect`) each implement `Collector`: `Name`, `Source`, `Interval`,
+`Available`, `Collect`. `collect.Run` starts one goroutine per *available* collector, each on its
+own ticker, and funnels `Result` values into a single channel — a 5 s cache walk must never delay
+the 1 s throughput sample. Intervals differ by design: procs 1 s, logs 2 s, localfs 5 s,
+systemd 5 s, bisync 30 s. Collectors are registered in `cmd/rclonetop/main.go`, where the
+cross-collector seams are also wired. The order of that slice is the order the facts travel in and
+only matters for `-d`, which runs them in turn: processes name the units and the logs of what is
+running now, units name the logs of what is not, and the logs name the paths the bisync listings
+cannot spell. Any other order makes `-d` show each collector missing what the next was about to
+tell it.
+
+A collector that discovers its subject at run time (the log collector, from `--log-file` arguments)
+must return `true` from `Available`. `collect.Run` filters once at startup, before any process has
+been seen, so answering "nothing to do yet" there switches it off for the whole session.
+
+**The model** (`internal/model`) is the shared vocabulary. Two invariants that are easy to break:
+
+- Every value carries its `Source`. The UI distinguishes "measured", "inferred" and "this source
+  went quiet" — a missing measurement must never be rendered as a zero, because a zero and an
+  unreadable counter mean opposite things to someone checking whether their backup ran.
+- In `State.Apply`, a **nil** slice means "this collector has nothing to say about that" and an
+  **empty** one means "it looked and found none". Only the latter clears what is on screen. A
+  collector that finds nothing must return an empty slice, not nil (`TestNoProcessesReportsEmptyNotNil`).
+  `State.Fail` records an error without discarding earlier data.
+
+`State.Apply` merges per-source: each collector owns the slices it fills, and one collector's
+snapshot never overwrites another's. Where one collector holds a fact another *needs in order to
+collect at all*, it is handed over at collection time rather than merged afterwards — see the seams
+above. The bisync one is exact rather than a guess: `canonicalPath` mangles what the log said the way
+rclone does and matches the result against the listing filename, because the mangling cannot be run
+backwards.
+
+**The joins** live in `State.Resolve` (`model/view.go`), which turns the per-source state into the
+`View` a renderer draws: `ProcRow` and `UnitRow` carry the job, the timer and the errors that belong
+to them, already matched on PID, unit name, log file and mountpoint. Rules that live here and
+nowhere else: a unit whose process is on screen gets no line of its own but its journal errors move
+to that process; two timers starting one service collapse to the one due first; a mount no process
+serves is an orphan. `Resolve` takes no clock and returns plain data — ageing a timestamp for
+display is the renderer's business — which is what makes these rules testable without rendering
+anything (`model/view_test.go`).
+
+**The UI** (`internal/ui`) is one Bubble Tea `Model`. `Update` handles four messages: window size,
+keys, a clock `tick` (so uptimes advance with no new data), and `resultMsg` from the collector
+channel — `waitFor` re-arms itself after each one. There are two views, chosen by `m.preset` and
+alternated with `p`: `renderDense` in `dense.go` (preset 0, the default) and `renderFramed` in
+`framed.go` (preset 1), plus `units.go`, `jobs.go`, `graphs.go`, `format.go`
+(`Bytes`/`Rate`/`Duration`/`Ago`/`Truncate`).
+It renders a `View` and does no matching of its own: a renderer reaching back into `m.state` to find
+something is the smell that a join has leaked back out of `Resolve`. Colour is applied only here.
+
+**The two views say the same things, and the framed one adds only what the room buys.** Both compose
+the same fragments — `procHead`, `procMeta`, `procThroughput`, `jobProgress`, `filesInFlight`,
+`denseUnits`, `denseCaches` — and for everything either of them *can* say, the difference is only
+where the fragment lands. A fragment drawn in one view alone is a fragment tested in one view alone,
+and the dense view is the one that has to keep working on a host nobody can widen.
+
+There are exactly two exceptions and they share one justification: **rows the dense view does not
+have.** The tall graphs in the bandwidth panel, and the meter under a job whose completion is known
+(`transfersBody`). Both restate something the dense view already prints as text — a sparkline, a
+percentage — at a size the single-line view has no room for. That is the test for a third: not "the
+framed view has space", but "the dense view prints this and the extra room makes it legible". Adding
+a fact only the framed view knows fails it, and the rule was first written without this paragraph,
+which is how the meter got in unrecorded.
+
+The rule's own cost is that both views need testing where they differ: `TestAJobWithKnownProgressGetsABar`
+and `TestTheBandwidthPanelDrawsATallGraph` exist because nothing in the dense view's suite covers them.
+
+**A hotkey digit is drawn beside each box title, and it toggles the box.** It stayed undrawn until
+`shown_boxes` gave it something to select — drawing one that did nothing would have been "a flag
+accepted and ignored is worse than one rejected" moved from the command line to the screen, where it
+is harder to notice and easier to believe. `internal/ui/box` kept the geometry for it from the start,
+because the geometry is what changes when one arrives; `panelSpec` now carries it, fixed per box kind
+in `readingOrder` rather than per screen position, so the key that hides `files` does not shift under
+a finger that just found it as other panels come and go. The digit itself is `hi_fg`, a flat theme key
+looked up the same way `title` is -- not one of `textAccents`' ramp-indexed accents, since there is no
+ramp here to index -- and plain rather than bold: `alarm()` reaches for `hi_fg` too, but bold with it,
+for something wrong right now, and a permanent hotkey carries neither that weight nor that news.
+
+`layout.go` answers *where*, and answers it in arithmetic over two integers: no theme, no lipgloss,
+no state, so the awkward sizes are asserted on placements rather than on escape sequences. It
+escalates downwards — two columns from `twoColumnsFrom` (100), then one from `denseBelow` (60), then
+the dense view — and **each step is taken only if it comes out whole**. That is why the height
+threshold is derived rather than written down: an earlier attempt compared the height against a
+hand-picked minimum, and a terminal seven rows tall passed it and then dropped every panel in turn,
+leaving a framed view with nothing in it. `TestEverySizeIsCoveredExactlyOnce` is what found that, and
+a second hole with it — a column whose only growing panel had been dropped stopped short of the
+footer — which is why it sweeps sizes and asserts cover-once rather than checking rectangles it
+already believes in.
+
+- **A panel that does not fit is dropped whole, never squeezed.** A frame costs two rows before it
+  says anything, so a panel cut to its last row spends more of the screen on its border than on its
+  content, and the dense line it replaced said the same thing in one.
+- **The order they are read in is not the order they are given up.** `readingOrder` stacks transfers,
+  bandwidth, files, status; `givingUpOrder` keeps transfers, status, bandwidth, files. A host running
+  nothing has no bandwidth to report, and the question it is being asked is whether last night's run
+  succeeded.
+- A column must fill its screen: when nothing left in it grows, the last panel takes the leftover,
+  because a gap above the footer reads as a panel that failed to draw.
+- **Content before decoration: rows go to the panel that has something to put in them.** `packColumn`
+  makes three passes — minimums, then panels with more content than their minimum growing to hold it
+  (in `givingUpOrder`), then whatever nobody claimed split between the ones that grow. Without the
+  middle pass the spare went to whoever was *able* to use it, and a real host showed the result:
+  `status` truncating to `+6 more` beside a `transfers` panel with two lines in eleven. `panelRows` is
+  the only thing the layout knows about the data and it is a count, not the data — the file stays
+  arithmetic over integers. `Model.panelDemand` measures it **by rendering the bodies**: counting any
+  other way is a second renderer that has to agree with the first, and the day it stops agreeing is
+  the day a panel truncates with room to spare. Bandwidth deliberately demands nothing, because a
+  graph fills any height and a figure for what it "has to show" would be invented to win an argument
+  with the panel beside it.
+- A graph's arrow sits on its **bottom** row. On the top it read correctly in a fixture and wrongly on
+  a host: a mount moving six kibibytes a second fills only the foot of a graph eleven rows tall, and
+  the label hung in an empty corner. The baseline is the one row a trace always reaches.
+- `renderFramed` replicates the dense view's **final single clamp**, with more at stake — a line that
+  wraps inside a frame takes the frame with it. Panels come back as exact rectangles (`fitCell`) for
+  the same reason: the columns are stitched row by row, so one column short slides everything to its
+  right, on that row only.
+- The height budget is the framed view's promise alone. The dense view has never budgeted against
+  `m.height`: it says what it has to say and the terminal scrolls.
+- **A graph is budgeted against the line that holds it, not against the terminal.** `graphStore.spark`
+  takes the cell count from its caller and `procThroughput` takes a width, because the dense view has
+  the terminal and a framed panel has half of it. Sizing once from `m.width` did not overflow —
+  the panel cuts the line to its frame — it silently took the `rd`/`wr` counters off the end of it,
+  which is the same class of mistake as two consumers disagreeing about `effectiveWidth(0)`. The
+  history kept is still the upper bound: a graph cannot show samples that were never stored.
+**The bandwidth panel is the one that pays for the framing.** Everywhere else a box holds text the
+dense view already holds; there the room buys resolution the dense line cannot have — braille gives
+four steps per row, so a graph of four rows across fifty-six columns tells apart rates that sixteen
+cells of one row round together. `graphStore.plot` is `spark` with a height, and the plotter has
+taken that height since it was written.
+
+- **A graph is graded up its own height, hot at the top — never along its value.** `graphRowColors`
+  indexes the ramp by row, so a trace that reaches the top row says "as busy as this process gets"
+  without a figure being read; grading by the value would repaint the whole graph on every sample and
+  say what the number beside it already says. **Raw**, and this is the one place the measurement says
+  raw is right: a graph row sits against `main_bg`, black in the built-in theme, and the coldest ramp
+  end is `upload` at luminance 32 — faint but present. The meter needed lifting because its cells sit
+  against `meter_bg` at 64, *lighter* than five of the nine cold ends. A graph has no track under it.
+  One row is a fixed `sparkPoint` (0.75) instead, because a single row has no height to grade along —
+  and because a dense line that changed colour with this change would be a regression dressed as a
+  feature.
+- **`maxSparkCells` belongs to the dense view's throughput line, not to the program.** Sixteen is
+  reasoned for a trace sharing a row with its own figure; the bandwidth panel gives a graph rows of
+  its own and takes the panel's width, where the cap would only throw history away. `Model.graphCells`
+  is where that choice is made, by asking the layout rather than assuming.
+- **Every `resize` goes through `graphCells`, and the `p` key is one of them.** The two views want
+  wildly different amounts of history, so a store sized for the one just left draws the other blank
+  down its right half — the failure #11 predicted in the same breath as the feature.
+- The two arrows that label the stacked graphs are **declared accents** (`accentDownload`,
+  `accentUpload`, at their ramps' hot ends). Colour alone cannot say which graph is which: `--tty` has
+  eight of them.
+- `stripStyles` (`framed.go`) is the one escape-stripper: production needs it for `bodyLines`, the
+  tests read every rendered view through it, and the copy that would go stale is the one the
+  assertions run on.
+
+**A ramp may be indexed at a point somebody chose; it must never be indexed by a measurement.** This
+is the one rule of the colour vocabulary. It was first written as "raw for area, blended for text",
+which is the wrong cut and cost a round of review: it washed out fixed accents that were already
+legible. The line is **measured versus chosen**, because only a measurement reaches zero, and the
+zero end of a btop ramp is unreadable.
+
+- `Model.magnitudeStyle(ramp, frac)` — `frac` is a **measurement**: a rate over the observed peak,
+  RSS over 1 GiB, a job's completion, how stale a run is. It blends from `main_fg` *towards* the ramp
+  rather than indexing it, because an idle mount sits at `frac` 0 for hours and indexing wrote
+  `↓ 0 B/s` in near-black violet. At 0 the text is plain `main_fg`; at 1 it is the ramp's own hot
+  end, so nothing is lost at the top.
+- `Model.accentStyle(a)` — `a` is a **chosen** point, declared in `textAccents`: "cache figures are
+  cyan". Indexed raw, because blending only dilutes a colour somebody already picked for being
+  legible. An accent not listed in `textAccents` escapes the legibility test, which is the one way to
+  get an unreadable one past the suite.
+- `Model.gradientStyle(ramp, frac)` — raw, and reached for directly only to fill **area**, which now
+  means the sparkline alone. A dark *cell* against a dark background honestly reads as "not much"; a
+  dark glyph reads as nothing at all.
+- `Model.meterStyle(ramp, at)` — area too, and raw for the same reason, **except where it would not
+  clear the track**. This is the clause the rule was missing, and it was found by measuring rather
+  than by reading: a meter's cell does not sit against the background, it sits against `meter_bg`,
+  which is a *lighter* dark. Against `#404040` the cold end of five of the nine ramps is darker than
+  the track it sits in, `download` and `upload` worst of all — so a bar at four per cent drew a hole
+  rather than a mark, which is the text failure arrived at from the other side. `meterColor` indexes
+  the ramp and then lifts the result towards the ramp's own hot end, by the least that clears the
+  floor, so only the cells that actually fail are touched and the hue still says which ramp it is.
+
+Six tests hold all this, and two of them are the ones that matter, because they pin the *premises*.
+`TestTextStaysLegibleAcrossTheWholeRamp` and `TestFixedAccentsAreLegible` hold both text paths above
+half of `main_fg`'s luminance, and `TestEveryFilledCellClearsTheTrack` holds the meter above
+`meter_bg` plus `meterFloor`; `TestTheRawRampReallyIsTooDarkForText` and
+`TestTheRampsColdEndReallyIsLostAgainstTheTrack` are why neither cure can be "simplified" back into
+its disease with everything else still green, and `TestTheLiftLeavesALegibleRampAlone` is why the
+meter's cure cannot spread to cells that never needed it. Luminance is Rec. 709 and is a poor proxy
+for a saturated primary — it scores `#ff0000` at 54 — which is why these run against the built-in
+theme only and the `tty` one is exempt. That exemption is also why `--tty` tells a meter's two halves
+apart by *shape*: eight saturated colours cannot be relied on to do it by brightness.
+
+**Three levels of emphasis, and each boundary was a mistake on one side of it.** `Model.label()` is
+halfway between `main_fg` and `inactive_fg`; `Model.value()` is `main_fg` and **not bold**. Labels
+were `inactive_fg` (`#40`, the colour that means *switched off*), which made most of the screen
+invisible and left nothing to say "switched off" with. Made `main_fg` instead, they were
+indistinguishable from the figures they name. And bolding every value made the screen uniformly
+bright and flat — emphasising everything emphasises nothing.
+
+**Bold rides with colour, and the styles carry it themselves.** `magnitudeStyle`, `accentStyle` and
+`alarm` come back bold; `gradientStyle` and `meterStyle` do not, because area has no glyph to
+thicken. Do not add
+`.Bold(true)` at a call site: that is how this started, as a sentence in this file plus a
+`.Bold(true)` repeated fourteen times with not one caller wanting otherwise. A rule with no
+exceptions belongs in the constructor, and `TestWeightIsBuiltIntoTheColouredStyles` keeps it there.
+
+`inactive_fg` is only for what is genuinely inert or stale: "collecting…", "throughput unavailable",
+"idle", a staleness note. Not for a permanent key hint — `q quit` is chrome that is always actionable
+and takes `label()`, which is the trap this reservation exists to catch.
+
+**Sub-packages** deliberately kept free of colour and of Bubble Tea so they stay testable as plain
+data: `internal/ui/graph` (braille / eighth-block / ASCII plotting, returns bare runes),
+`internal/ui/box` (frame geometry; the top edge comes back as typed segments, because the border, the
+title and the hotkey are three colours -- two of them drawn today -- and finding them again inside a
+finished string is how a geometry bug becomes a colour bug — it copies the six runes rather than importing lipgloss for them,
+since depending on the styling library would put it back inside the thing it is kept outside of),
+`internal/series` (fixed-capacity `Ring`, sized from the terminal width, drops non-finite samples),
+`internal/theme` (btop `.theme` parsing, 101-step gradients matching btop's banding, plus the
+`default` and `tty` built-ins in `builtin.go`).
+
+`internal/execstart` is the other one: everything involved in reading what a unit actually runs,
+behind two functions plus a helper — `DrivesRclone(execStart)`, `LogFile(execStart, home)` and
+`LogFileFromArgs(args)`. Behind them sit systemd's `path=`/`argv[]=` spelling, the bounded wrapper
+script read, and the shell reading that resolves `--log-file "$LOG_DIR/x.log"` without running
+anything. The systemd collector keeps only the cache of the answers, and `Logs` uses
+`LogFileFromArgs` on the vector it takes from `/proc`. `home` is what `$HOME` stands for and must be
+empty when there is no honest answer — a system unit's home is root's, or whatever `User=` says.
+
+**Configuration** (`internal/config`) parses btop's `key = value` format into a comparable `Config`.
+It is read at startup by `cmd/rclonetop` and never afterwards, and it is never written: btop rewrites
+its own configuration on exit, which rclonetop cannot do and stay read-only, so `--default-config`
+prints the commented file btop would have written and the user's shell decides where it lands.
+
+The rules that live there:
+
+- **Precedence is decided by what was typed, not by what the value is.** `parseFlags` records the
+  long form of every flag `flag.Visit` reports, and `applyConfig` lays the file under the command
+  line by consulting that map. Comparing against the defaults instead would let the file overrule
+  `--update 2000`, which is a user choosing the same number the default happens to be. For the same
+  reason every flag with a key is registered with `config.Defaults()`'s value rather than a literal:
+  a flag's default *is* what the file would have supplied, and one spelling cannot drift from two.
+- **The file is forgiving where the prompt is strict**, and the split is between kinds of wrongness,
+  not between sources. An unknown *key* is skipped, because a file written for a later version names
+  boxes and presets this build has never heard of and refusing to start would break every downgrade;
+  likewise an unknown `graph_symbol`, since the plotter falls back to braille. A known key with a
+  value that cannot mean anything — a number that is not a number, an `update_ms` below the floor —
+  is an error naming the file and the line. Skipping is not free and the cost is real: a misspelled
+  key is skipped as silently as a future one, so `vim_keys = True` in a file does nothing and says
+  nothing. That is the trade accepted, not a claim that the file warns.
+- **`clock_format` is the one unknown key that is refused**, because it is the one that never will be
+  a later version's: it is btop's name for a value rclonetop cannot take. rclonetop spells it
+  `clock_layout` and means a Go reference layout, not a strftime string — `time.Format` would render
+  `%X` literally and a header reading `%X` looks like a bug in rclonetop rather than a mistake in the
+  file. Both the old name and a `%` in the value are refused with the explanation. This is also why
+  the key was not simply called `clock_format`: btop's names are reused *where the meaning is the
+  same*, and a value neither program can read is not the same meaning.
+- **Naming a thing beats a flag that only implies it, within one source; across sources the command
+  line wins outright.** One rule, settled in two places and nowhere else: `resolveGraphSymbol` and
+  `resolveTTYTheme` in `cmd/rclonetop/flags.go`. `--tty` says "this is a console" and answers the
+  font and the palette by implication; `--graph-symbol` and `--theme` answer them outright, so both
+  survive a `--tty` typed alongside them. Both resolvers run *after* `applyConfig` has settled
+  `o.tty`, and read that rather than `cfg.ForceTTY` — moving either call up would compile and would
+  quietly start ignoring `--tty=false`.
+  - `graph_symbol` empty is a third state, not a fourth symbol: it means nobody has chosen, which is
+    what lets the file distinguish a symbol it named from one it defaulted to. `color_theme` has no
+    such state — it always holds something, and `default` is a theme somebody may have meant — so
+    `force_tty` read from a file still replaces the file's own theme. Only the prompt can be sure.
+  - `--tty=false` is the only way to say "no, this is not a console" when the file says it is, so it
+    has to work. Two attempts did not. The first asked only "is the symbol empty", which reads
+    correctly until a default configuration file names braille, at which point `--tty` silently stops
+    producing ASCII for everyone who copied one. The second asked `o.explicit[flagTTY]` alone, which
+    reads correctly until somebody types `--tty=false` — a flag that was typed, and is off. **A
+    boolean flag has three states and `flag.Visit` distinguishes two of them**: any rule weighing two
+    options has to ask both whether it was typed and what it says.
+- **The `explicit` map is keyed by constants** (`flagTTY`, `flagTheme`, …) and is not read outside
+  `flags.go`. A typo in one of those strings compiles, passes every test that happens not to cover
+  that option, and switches off its precedence rule — the file just starts winning against a typed
+  flag, which is the one thing the mechanism exists to prevent.
+  `TestExplicitKeysAreRealFlagNames` types every one of them.
+- `defaultFile` is prose written by hand — it is the only documentation of the format that ships with
+  the binary — so it can drift from the defaults it claims to show. `TestDefaultFileRoundTrips` is
+  the only thing that stops it: it parses the text and requires the result to equal `Defaults()`.
+  That is also why `Config` has no slices or maps.
+
+### Things that will bite
+
+- **Rates need two samples.** `/proc/<pid>/io` counters are cumulative and must never be rendered as
+  a rate; `ReadRate`/`WriteRate` are zero on the first sample, and the graph store drops it. When
+  `IOAvailable` is false (process owned by another user) the UI shows a placeholder.
+- **Only the process collector advances the graphs.** Sampling on every collector's tick would
+  stretch the time axis by however many sources happen to be enabled.
+- **`effectiveWidth`** resolves a reported width of 0 to 80. Every consumer must agree: the renderer
+  treating 0 as 80 while graph sizing treated it as "too narrow" silently dropped the graphs.
+- **The files-in-flight rows share one column, and a column is shed before a row is**
+  (`jobs.go`). Their figures are all built before any row is drawn, because budgeting each name
+  against its own row starts the numbers at a different place on every line and four ragged lines
+  read as four unrelated statements. The consequence is that the widest row sets the width for all
+  of them, so on a narrow terminal the estimates go first and only then the whole list —
+  `inFlightColumn` measures every row against the same `avail`, and subtracting from the running
+  minimum instead compounds the rows and hides a list that fits. The list is also capped at
+  `maxInFlight` with the remainder counted, because four rows and no count read as a job with four
+  files left in it.
+- **A log file is append-only across runs.** One file holds every run of the job that writes it, so
+  the parser has to notice where one ends and the next begins. There are **three** markers and the
+  third was found on screen rather than by reading: bisync's "Synching Path1" line; the elapsed time
+  going backwards, which is the only one a `sync` or `copy` gives; and
+  `Failed to create file system`, which rclone writes while opening a remote, before the command it
+  was given runs at all. A run that dies there prints neither of the other two — it never reaches
+  bisync's own code, and it never completes a statistics block — so without the third marker the
+  *previous* run's verdict survives, and a unit that had just failed carried the word "successful"
+  beside its exit code. Without any of them this morning's failure is still reported as tonight's
+  state. A statistics block is committed only
+  when its "Elapsed time" line arrives: half a block is not a measurement. The file lists rclone
+  writes *after* that line — `Checking:` and then `Transferring:` — belong to the block it has just
+  committed, so they are gathered and attached when the list ends rather than reopening it, on the
+  same grounds: half a list is not a measurement either. `Job.Transferring` keeps the same
+  nil-versus-empty distinction as the rest of the state, and the two are both reachable — nil is a
+  run no block has been read for yet, or one under `--stats-one-line`, which prints no file list at
+  all; empty is a run between two files.
+- **systemd units are not simple.** A `Type=oneshot` sits at `activating` for its whole run and
+  `inactive` afterwards whether it succeeded or not — hence `Unit.Running`, `Active`, `Failed` and
+  `LastRun`. `ExitStatus` is an exit code only when `ExitCode` is `1` (CLD_EXITED); with `2` the same
+  number is a signal. Journal errors are retained per unit (max 5, 24 h) and forgotten once a later
+  run succeeds, because the tail is incremental and reporting only new lines would make a failure
+  flash for one frame.
+
+### Test seams
+
+There is no `testdata/` directory: fixtures are built inline in `t.TempDir()` or embedded as string
+constants, so the suite never depends on what is running on the host.
+
+- `NewProcsAt(root)`, `NewBisyncAt(dir)`, `NewLocalFSAt(mountInfo, cacheRoot)` — filesystem roots.
+- `newSystemdWith(run, scopes)` — injects a `runner func(ctx, name, args...) ([]byte, error)` in
+  place of real `systemctl`/`journalctl`, fed canned JSON.
+- `Logs` needs no seam of its own: it is told what to read by `NoteProcesses`, so a test points it
+  at a file in `t.TempDir()` through a fabricated command line. `feed(lines...)` drives the parser
+  alone.
+- `internal/execstart` needs none either: its input is a string, and its one side effect is reading
+  a path that string names, so `writeScript` puts a wrapper in `t.TempDir()` and hands back the
+  `ExecStart` systemd would have recorded for it.
+
+The log fixtures are transcribed from real rclone output, paths neutralised and nothing else
+tidied — the tab inside `Transferred:`, the alignment padding, the trailing `Listed` count. Two of
+them are load-bearing: the JSON entry's own text says 643.062 KiB where its `stats` object says
+658496 bytes, which is what pins the preference for the object; and the mangled listing name in
+`bisync_test.go` was produced by a real `rclone bisync` on a path containing a space.
+
+Any new collector should follow the same shape: a real constructor plus an `...At`/`...With` variant.
+
+## Constraints to preserve
+
+- **Read-only, always.** No writes, no config changes, no starting or stopping transfers or units,
+  no network scanning. `systemctl`/`journalctl` are invoked directly (no shell, no D-Bus library)
+  with read-only subcommands and `LC_ALL=C`; wrapper-script reads (`internal/execstart`) are bounded
+  to regular files under 256 KiB that start with a shebang, opened `O_NONBLOCK` and inspected through
+  the descriptor, and only for units systemd already lists. A script is read, never run: command
+  substitution, `${VAR:-default}` and an unassigned variable all mean "no answer", because working
+  out what those produce means executing it.
+- **No flag that does nothing.** `--vim-keys` is intentionally unregistered until there is something
+  on screen to move between; accepting and ignoring a flag is worse than rejecting it. `-p` was the
+  same story until #11 gave it something narrower to name than btop's own box arrangement: with two
+  real views to start on, `-p, --preset 0|1` is registered, and it takes only those two values because
+  those are the ones that exist. Short flags mirror btop's meaning where it applies. The same rule
+  binds `internal/config`: `presets` and `vim_keys` get no `Config` field to be parsed into and
+  shelved, and neither does `preset` -- it stays flag-only because a key of that name would collide
+  with btop's own `presets` before #7 builds what that one means. `shown_boxes` was on this list too
+  until #22 gave it a consumer: it names which of the framed view's panels to start with, parsed but
+  not validated in `internal/config` on the same terms as `graph_symbol`, and interpreted -- empty
+  means every panel, an unrecognised name is dropped -- in `internal/ui`, which is where that
+  vocabulary actually lives. A key read into a field that nothing consumes is the same lie as a flag,
+  and harder to notice in a file than at a prompt. (Unrecognised keys are still skipped in silence,
+  for the forward-compatibility reason below — that is a cost of the design, not a warning system.)
+- **No new dependencies without a real reason.** Graphing and theme parsing are hand-written
+  precisely because the requirement is narrower than any library's. `github.com/charmbracelet/x/term`
+  is a direct require and was not a new dependency when it became one: bubbletea already links it to
+  take the alternate screen, so `go mod tidy` moved one line and added no code. It answers "is stdout
+  a terminal" for `-d`, and it is there because the hand-rolled version was *wrong* — a character
+  device is not a tty, `/dev/null` is one too, and the comment asserting otherwise was believed for
+  exactly as long as nobody checked. `term.IsTerminal` is a real `ioctl(TCGETS)`.
+- Comments in this codebase explain *why*, at length, especially where the obvious implementation is
+  wrong. Match that register when editing; do not strip the rationale.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `Seykhel/rclonetop`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles are used as-is: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
