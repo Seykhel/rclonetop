@@ -1,6 +1,7 @@
 # Build output
 /bin/
 /dist/
+/graphify-out/
 
 # Local configuration and state: never versioned, see rclonetop.conf.example
 # for the schema.
