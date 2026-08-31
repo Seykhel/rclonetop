@@ -19,6 +19,8 @@ force_tty = True
 truecolor = False
 clock_layout = "15:04"
 shown_boxes = "transfers status"
+preset_1 = "transfers:0:2 bandwidth:1:1"
+preset_9 = "status:1:3"
 `
 	got, err := parse("test.conf", strings.NewReader(file))
 	if err != nil {
@@ -34,6 +36,8 @@ shown_boxes = "transfers status"
 		TrueColor:       false,
 		ClockLayout:     "15:04",
 		ShownBoxes:      "transfers status",
+		Preset1:         "transfers:0:2 bandwidth:1:1",
+		Preset9:         "status:1:3",
 	}
 	if got != want {
 		t.Errorf("parse = %+v, want %+v", got, want)
@@ -153,6 +157,40 @@ func TestParseAcceptsAnUnknownShownBoxesName(t *testing.T) {
 	}
 }
 
+func TestParseReadsPresetKeys(t *testing.T) {
+	got, err := parse("test.conf", strings.NewReader(`preset_2 = "transfers:0:2 status:1:1"`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Preset2 != "transfers:0:2 status:1:1" {
+		t.Errorf("Preset2 = %q", got.Preset2)
+	}
+}
+
+func TestParseRejectsInvalidPresetEntries(t *testing.T) {
+	for _, value := range []string{"bogus:0:1", "files:2:1", "status:1:0", "status:1:one", "status:1:1 status:0:2", "status:1"} {
+		_, err := parse("test.conf", strings.NewReader("preset_2 = \""+value+"\""))
+		if err == nil {
+			t.Errorf("parse accepted invalid preset %q", value)
+		}
+		if !strings.Contains(err.Error(), "test.conf:1") {
+			t.Errorf("error %v lacks file and line", err)
+		}
+	}
+}
+
+func TestParseRejectsPresetNumbersOutsideRange(t *testing.T) {
+	for _, key := range []string{"preset_0", "preset_10"} {
+		_, err := parse("test.conf", strings.NewReader(key+" = \"\""))
+		if err == nil {
+			t.Errorf("parse accepted %s", key)
+		}
+		if !strings.Contains(err.Error(), "between 1 and 9") {
+			t.Errorf("error %v lacks range", err)
+		}
+	}
+}
+
 func TestParseRejectsMalformedValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -221,6 +259,7 @@ func TestDefaultFileDocumentsEveryKey(t *testing.T) {
 		"color_theme", "theme_background", "graph_symbol",
 		"update_ms", "base_10_sizes", "force_tty", "truecolor", "clock_layout",
 		"shown_boxes",
+		"preset_1", "preset_2", "preset_3", "preset_4", "preset_5", "preset_6", "preset_7", "preset_8", "preset_9",
 	}
 	// The list above is written out by hand, so a field added to Config would
 	// otherwise slip past both this test and the file it checks -- the round

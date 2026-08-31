@@ -1,6 +1,11 @@
 package ui
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/Seykhel/rclonetop/internal/preset"
+)
 
 // This file decides where the framed view's panels go, and nothing else. It is
 // arithmetic over two integers: no theme, no lipgloss, no state. That is
@@ -116,6 +121,48 @@ func panelForHotkey(key int) (panelKind, bool) {
 // reason for the same nothing, kept apart from that one by candidates below.
 type panelSet [len(panels)]bool
 
+// presetLayout is the validated arrangement for one numbered preset.
+type presetLayout struct {
+	configured bool
+	shown      panelSet
+	column     [len(panels)]int
+	weight     [len(panels)]int
+}
+
+// parsePreset interprets one box:P:G configuration value. It lives beside
+// layout planning so configuration remains a raw string until the UI knows
+// the panel vocabulary.
+func parsePreset(raw string) (presetLayout, error) {
+	p := presetLayout{}
+	if strings.TrimSpace(raw) == "" {
+		return p, nil
+	}
+	p.configured = true
+	entries, err := preset.Parse(raw)
+	if err != nil {
+		return presetLayout{}, err
+	}
+	for _, entry := range entries {
+		kind := -1
+		for k, spec := range panels {
+			if spec.title == entry.Box {
+				kind = k
+				break
+			}
+		}
+		if kind < 0 {
+			return presetLayout{}, fmt.Errorf("unknown box %q", entry.Box)
+		}
+		if p.shown[kind] {
+			return presetLayout{}, fmt.Errorf("box %q appears more than once", entry.Box)
+		}
+		p.shown[kind] = true
+		p.column[kind] = entry.Column
+		p.weight[kind] = entry.Weight
+	}
+	return p, nil
+}
+
 // allShown is every panel a candidate, which is shown_boxes left unset and
 // every test in this package written before it existed.
 func allShown() panelSet {
@@ -218,15 +265,22 @@ type panelRows [len(panels)]int
 // then dropped every panel in turn, leaving a framed view with nothing in it.
 // "Did anything survive" is the same question asked where the answer is known.
 func planLayout(width, height int, want panelRows, shown panelSet) layout {
+	return planLayoutWithPreset(width, height, want, shown, nil)
+}
+
+func planLayoutWithPreset(width, height int, want panelRows, shown panelSet, preset *presetLayout) layout {
 	w, rows := effectiveWidth(width), effectiveHeight(height)-chromeRows
 
 	if w >= twoColumnsFrom {
-		if l, ok := planColumns(w, rows, want, shown); ok {
+		if l, ok := planColumnsWithPreset(w, rows, want, shown, preset); ok {
 			return l
 		}
 	}
 	if w >= denseBelow {
 		if keep, dropped := fit(candidates(readingOrder, shown), rows); len(keep) > 0 {
+			if preset != nil && preset.configured {
+				return layout{panels: packColumnPreset(keep, 0, headerRows, w, rows, want, *preset), dropped: dropped}
+			}
 			return layout{
 				panels:  packColumn(keep, 0, headerRows, w, rows, want),
 				dropped: dropped,
@@ -241,20 +295,95 @@ func planLayout(width, height int, want panelRows, shown panelSet) layout {
 // that survived are better off spread across the whole width, which is the
 // arrangement one step down.
 func planColumns(w, rows int, want panelRows, shown panelSet) (layout, bool) {
-	leftKeep, leftGone := fit(candidates(leftColumn, shown), rows)
-	rightKeep, rightGone := fit(candidates(rightColumn, shown), rows)
+	return planColumnsWithPreset(w, rows, want, shown, nil)
+}
+
+func planColumnsWithPreset(w, rows int, want panelRows, shown panelSet, preset *presetLayout) (layout, bool) {
+	leftOrder, rightOrder := leftColumn, rightColumn
+	if preset != nil && preset.configured {
+		leftOrder, rightOrder = nil, nil
+		for _, k := range readingOrder {
+			if !shown[k] {
+				continue
+			}
+			if preset.column[k] == 0 {
+				leftOrder = append(leftOrder, k)
+			} else {
+				rightOrder = append(rightOrder, k)
+			}
+		}
+	}
+	leftKeep, leftGone := fit(candidates(leftOrder, shown), rows)
+	rightKeep, rightGone := fit(candidates(rightOrder, shown), rows)
 	if len(leftKeep) == 0 || len(rightKeep) == 0 {
 		return layout{}, false
 	}
 
 	lw := columnWidth(w)
 
+	leftPanels, rightPanels := packColumn(leftKeep, 0, headerRows, lw, rows, want), packColumn(rightKeep, lw, headerRows, w-lw, rows, want)
+	if preset != nil && preset.configured {
+		leftPanels = packColumnPreset(leftKeep, 0, headerRows, lw, rows, want, *preset)
+		rightPanels = packColumnPreset(rightKeep, lw, headerRows, w-lw, rows, want, *preset)
+	}
 	return layout{
 		panels: append(
-			packColumn(leftKeep, 0, headerRows, lw, rows, want),
-			packColumn(rightKeep, lw, headerRows, w-lw, rows, want)...),
+			leftPanels, rightPanels...),
 		dropped: append(leftGone, rightGone...),
 	}, true
+}
+
+func packColumnPreset(order []panelKind, x, top, w, rows int, want panelRows, preset presetLayout) []placement {
+	if len(order) == 0 {
+		return nil
+	}
+	out := make([]placement, 0, len(order))
+	used := 0
+	for _, k := range order {
+		h := panels[k].minRows
+		out = append(out, placement{kind: k, x: x, w: w, h: h})
+		used += h
+	}
+	spare := rows - used
+	if spare > 0 {
+		totalWeight := 0.0
+		for _, k := range order {
+			weight := preset.weight[k]
+			if weight <= 0 {
+				weight = 1
+			}
+			totalWeight += float64(weight)
+		}
+		remaining := spare
+		for i, k := range order {
+			weight := preset.weight[k]
+			if weight <= 0 {
+				weight = 1
+			}
+			add := int(float64(spare) * float64(weight) / totalWeight)
+			if i == len(order)-1 {
+				add = remaining
+			}
+			if add > remaining {
+				add = remaining
+			}
+			out[i].h += add
+			remaining -= add
+		}
+		for i := range out {
+			if remaining == 0 {
+				break
+			}
+			out[i].h++
+			remaining--
+		}
+	}
+	y := top
+	for i := range out {
+		out[i].y = y
+		y += out[i].h
+	}
+	return out
 }
 
 // columnWidth is how wide a panel's column is on a screen of this width.

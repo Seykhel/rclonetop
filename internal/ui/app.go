@@ -33,7 +33,8 @@ type Options struct {
 	GraphSymbol graph.Symbol
 	// Preset is the view to start in: 0 for the dense one, 1 for the framed
 	// one -- mirrored by Model.preset, which p then alternates at runtime.
-	Preset int
+	Preset  int
+	Presets [10]string
 	// ShownBoxes is internal/config's raw shown_boxes value, carried through
 	// unresolved the same way GraphSymbol is: interpreting it (empty means
 	// every panel, an unrecognised name is dropped) is parseShownBoxes's job,
@@ -51,16 +52,18 @@ type Model struct {
 	height int
 	now    time.Time
 
-	// preset is which view is on screen: 0 is the dense one, 1 the framed
-	// one. btop's own numbering, and the two values are the two that exist --
-	// which is the condition #7 set for the flag that names them.
+	// preset is which view/layout is on screen: 0 is dense and 1-9 are framed.
 	preset int
 
 	// shown is which framed-view panels are candidates for the screen right
 	// now. Seeded once from Options.ShownBoxes at construction; a future
 	// session-only digit toggle mutates it from here, never from the
 	// configuration it was seeded from.
-	shown panelSet
+	shown            panelSet
+	presetLayouts    [10]presetLayout
+	availablePresets [10]bool
+	shownByPreset    [10]panelSet
+	framedPreset     int
 
 	// peakRate is the largest throughput seen so far, used as the upper
 	// bound when grading a rate along the gradient. It auto-scales like
@@ -97,16 +100,41 @@ func New(results <-chan collect.Result, opts Options, cancel context.CancelFunc)
 	if opts.GraphSymbol == "" {
 		opts.GraphSymbol = graph.Braille
 	}
-	return Model{
+	m := Model{
 		opts:    opts,
 		state:   model.NewState(),
 		results: results,
 		now:     time.Now(),
-		preset:  opts.Preset,
-		shown:   parseShownBoxes(opts.ShownBoxes),
 		graphs:  newGraphStore(opts.GraphSymbol, sparkCellsFor(effectiveWidth(0))),
 		cancel:  cancel,
 	}
+	m.availablePresets[1] = true
+	m.framedPreset = 1
+	for i := 1; i < len(opts.Presets); i++ {
+		if opts.Presets[i] == "" {
+			continue
+		}
+		if p, err := parsePreset(opts.Presets[i]); err == nil {
+			m.presetLayouts[i] = p
+			m.availablePresets[i] = true
+			m.shownByPreset[i] = p.shown
+		}
+	}
+	if opts.Presets[1] == "" {
+		m.shownByPreset[1] = parseShownBoxes(opts.ShownBoxes)
+	}
+	for i := 1; i < len(m.shownByPreset); i++ {
+		if i == 1 && opts.ShownBoxes == "" && m.availablePresets[i] && m.shownByPreset[i] == (panelSet{}) && !m.presetLayouts[i].configured {
+			m.shownByPreset[i] = allShown()
+		}
+	}
+	m.framedPreset = opts.Preset
+	if m.framedPreset == 0 {
+		m.framedPreset = 1
+	}
+	m.preset = opts.Preset
+	m.shown = m.shownByPreset[m.framedPreset]
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
@@ -176,23 +204,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Alternates rather than counts up: with two presets those are
 		// the same thing, and a counter would need a modulus that means
 		// nothing until there is a third.
-		m.preset = 1 - m.preset
+		if m.preset == 0 {
+			m.preset = m.framedPreset
+		} else {
+			m.preset = 0
+		}
 		// And the history is resized with it. The two views can show
 		// wildly different amounts of it -- sixteen cells on a dense
 		// line against a panel-wide graph -- so a store sized for the
 		// one the user just left draws the other blank down its right
 		// half, or throws away history it was about to need.
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
+	case "P":
+		if m.preset == 0 {
+			m.framedPreset = 0
+		}
+		m.framedPreset = m.nextPreset(m.framedPreset)
+		m.preset = m.framedPreset
+		m.shown = m.shownByPreset[m.framedPreset]
+		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 	case "1", "2", "3", "4":
 		// A box's digit is fixed to its kind, not to wherever it currently
 		// sits, so it means the same thing whether or not this key press
 		// reaches a screen with that box on it right now. There is no box
 		// in the dense view for it to name, so it does nothing there.
-		if m.preset != 1 {
+		if m.preset == 0 {
 			return m, nil
 		}
 		if k, ok := panelForHotkey(int(msg.String()[0] - '0')); ok {
 			m.shown[k] = !m.shown[k]
+			m.shownByPreset[m.framedPreset] = m.shown
 			// Hiding or showing a panel changes what graphCells reports
 			// for the bandwidth panel's width, the same reason p and a
 			// window resize both already call this.
@@ -204,6 +245,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.opts.UpdateMS = clampInterval(m.opts.UpdateMS * 2)
 	}
 	return m, nil
+}
+
+func (m Model) nextPreset(current int) int {
+	for step := 1; step <= 9; step++ {
+		n := (current+step-1)%9 + 1
+		if m.availablePresets[n] {
+			return n
+		}
+	}
+	return 1
 }
 
 func clampInterval(ms int) int {
@@ -226,10 +277,14 @@ func clampInterval(ms int) int {
 // the dense view. Every caller of resize goes through here: the two that matter
 // are a window resize and the p key, and they have to agree.
 func (m Model) graphCells() int {
-	if m.preset == 1 {
+	if m.preset > 0 {
 		// The demand does not change which panel is where, only how tall
 		// each one is, and this only wants the bandwidth panel's width.
-		if plan := planLayout(m.width, m.height, panelRows{}, m.shown); !plan.dense {
+		var preset *presetLayout
+		if m.presetLayouts[m.preset].configured {
+			preset = &m.presetLayouts[m.preset]
+		}
+		if plan := planLayoutWithPreset(m.width, m.height, panelRows{}, m.shown, preset); !plan.dense {
 			for _, p := range plan.panels {
 				if p.kind == panelBandwidth {
 					// What the frame leaves, less the arrow's
@@ -258,7 +313,7 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	if m.preset == 1 {
+	if m.preset > 0 {
 		// Which may still hand back the dense view: a terminal with no
 		// room for frames gets the one that fits, and the preset is left
 		// alone so that widening the window restores what was asked for.

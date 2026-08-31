@@ -43,13 +43,10 @@ type options struct {
 	// configuration file is the only way to set it.
 	clockLayout string
 
-	// preset is the view to start in: 0 for the dense one, 1 for the framed
-	// one -- the two values that exist, which is #7's own condition for
-	// registering this flag at all (see #7 and #11). No configuration key:
-	// btop's own preset is a saved box arrangement, still unbuilt here even
-	// though shown_boxes (below) now is, and a `preset` key would collide
-	// with that saved-arrangement meaning before it exists.
-	preset int
+	// preset is the view/layout to start in: 0 is dense and 1-9 are framed
+	// arrangements. The arrangements themselves come from the configuration.
+	preset  int
+	presets [10]string
 
 	// shownBoxes has no flag of its own -- unlike clockLayout, not because
 	// it is fiddly to type, but because it names runtime UI state: the
@@ -170,8 +167,8 @@ func parseFlags(args []string) (options, error) {
 	// Unlike graph_symbol in the file, there is no runtime fallback to lean
 	// on here for a value typed at the prompt: a typo wants an answer now,
 	// not a silent drop to preset 0.
-	if o.preset != 0 && o.preset != 1 {
-		return o, fmt.Errorf("--preset must be 0 or 1, got %d", o.preset)
+	if o.preset < 0 || o.preset > 9 {
+		return o, fmt.Errorf("--preset must be 0 through 9, got %d", o.preset)
 	}
 	return o, nil
 }
@@ -212,6 +209,7 @@ func applyConfig(o options, cfg config.Config) options {
 	}
 	o.clockLayout = cfg.ClockLayout
 	o.shownBoxes = cfg.ShownBoxes
+	o.presets = cfg.Presets()
 
 	// Both of these read o.tty, so they have to run after it has been settled
 	// just above -- they want the resolved answer to "is this a console", not
@@ -291,7 +289,7 @@ Options:
   -t, --tty               force TTY mode: 8 colours, and ASCII graphs unless
                           --graph-symbol says otherwise
   -l, --low-color         limit output to 256 colours
-  -p, --preset <0|1>      view to start in: 0 dense (default), 1 framed
+	  -p, --preset <0..9>     view/layout to start in: 0 dense, 1-9 framed
       --no-alt-screen     draw in place instead of on the alternate screen
   -c, --config <file>     read this configuration file instead of searching
       --default-config    print a commented default configuration, then exit

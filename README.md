@@ -157,7 +157,7 @@ rclonetop [options]
 | `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs — but a `--theme` or `--graph-symbol` named alongside it still wins |
 | `-l`, `--low-color` | limit output to 256 colours |
 | `--no-alt-screen` | draw in place instead of on the alternate screen |
-| `-p`, `--preset <0\|1>` | view to start in: `0` dense (default), `1` framed |
+| `-p`, `--preset <0..9>` | view/layout to start in: `0` dense (default), `1`-`9` framed |
 | `-c`, `--config <file>` | read this configuration file instead of searching |
 | `--default-config` | print a commented default configuration, then exit |
 | `-d`, `--debug` | print what each collector saw, then exit |
@@ -165,23 +165,21 @@ rclonetop [options]
 | `-V`, `--version` | show the version |
 
 Keys: `q` or `Esc` to quit, `p` to alternate the dense view and the framed one,
-`+` and `-` to refresh faster or slower, and in the framed view, `1`-`4` to
+`P` to cycle through configured framed presets, `+` and `-` to refresh faster
+or slower, and in the framed view, `1`-`4` to
 hide or show the transfers, bandwidth, files and status panels for the rest
 of the session.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
-already tuned there carries over. btop's `-p` named a saved box arrangement; here
-it is narrower, picking between the two views that already exist. `--vim-keys`
-still has nothing on screen to move between and is not accepted yet -- a flag
-that is accepted and ignored is worse than one that is rejected.
+already tuned there carries over. `--vim-keys` still has nothing on screen to
+move between and is not accepted yet -- a flag that is accepted and ignored is
+worse than one that is rejected.
 
 ## Configuration
 
 Most of what the flags set can be set once in a file instead — everything that
 is a setting rather than an action, which leaves out `-d`, `-h`, `-V`, `-c` and
-`--default-config`, and for now `--no-alt-screen` and `-p`/`--preset` as well
-(btop's own `preset`/`presets` name a saved box arrangement, which does not
-exist yet -- see #7):
+`--default-config`, `--no-alt-screen` and `-p`/`--preset`:
 
 ```
 $XDG_CONFIG_HOME/rclonetop/rclonetop.conf
@@ -205,6 +203,15 @@ force_tty = False
 truecolor = True
 clock_layout = "15:04:05"
 shown_boxes = ""
+preset_1 = ""
+preset_2 = ""
+preset_3 = ""
+preset_4 = ""
+preset_5 = ""
+preset_6 = ""
+preset_7 = ""
+preset_8 = ""
+preset_9 = ""
 ```
 
 `shown_boxes` lists which of the framed view's panels (`transfers`, `bandwidth`,
@@ -212,6 +219,13 @@ shown_boxes = ""
 including any this version has not been told about yet. `1`-`4` then hide or
 show a panel for the rest of the session; that choice is never written back
 here.
+
+`preset_1` through `preset_9` define framed layouts with space-separated
+`box:column:weight` entries. The box names are `transfers`, `bandwidth`,
+`files` and `status`; columns are `0` (left) or `1` (right), and weights are
+positive integers. Omitted boxes are hidden. Preset 1 is the built-in framed
+layout when left empty; presets 2-9 must be defined before selecting them with
+`-p`. `P` cycles through the available presets.
 
 rclonetop never writes that file. btop rewrites its own configuration on exit,
 which is not compatible with reading only, so the commented default btop would

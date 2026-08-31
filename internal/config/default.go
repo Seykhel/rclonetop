@@ -83,6 +83,18 @@ clock_layout = "15:04:05"
 #* view to hide or show a panel for the rest of the session; that choice is
 #* never written back here.
 shown_boxes = ""
+
+#* Optional framed layouts. Each entry is box:column:weight; column is 0 or 1.
+#* Omit a box to hide it. An empty preset uses the built-in layout.
+preset_1 = ""
+preset_2 = ""
+preset_3 = ""
+preset_4 = ""
+preset_5 = ""
+preset_6 = ""
+preset_7 = ""
+preset_8 = ""
+preset_9 = ""
 `
 
 // DefaultFile returns the commented default configuration, stamped with the

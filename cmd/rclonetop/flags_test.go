@@ -49,10 +49,7 @@ func TestParseFlagsRejectsBadValues(t *testing.T) {
 		// wondering why the graphs did not change.
 		{"unknown graph symbol", []string{"--graph-symbol", "brialle"}},
 		{"unknown flag", []string{"--nonsense"}},
-		// Only 0 and 1 are views that exist; anything else is a typo, not a
-		// later version's value -- there is no runtime file to be forward
-		// compatible with here.
-		{"preset out of range", []string{"--preset", "2"}},
+		{"preset out of range", []string{"--preset", "10"}},
 		{"preset not a number", []string{"--preset", "one"}},
 	}
 	for _, tt := range tests {
@@ -77,13 +74,13 @@ func TestParseFlagsAcceptsEveryGraphSymbol(t *testing.T) {
 }
 
 func TestParseFlagsAcceptsEveryPreset(t *testing.T) {
-	for _, args := range [][]string{{"-p", "1"}, {"--preset", "1"}} {
+	for _, args := range [][]string{{"-p", "1"}, {"--preset", "9"}} {
 		o, err := parseFlags(args)
 		if err != nil {
 			t.Errorf("parseFlags(%v): %v", args, err)
 		}
-		if o.preset != 1 {
-			t.Errorf("parseFlags(%v): preset = %d, want 1", args, o.preset)
+		if o.preset != 1 && o.preset != 9 {
+			t.Errorf("parseFlags(%v): preset = %d, want 1 or 9", args, o.preset)
 		}
 	}
 }

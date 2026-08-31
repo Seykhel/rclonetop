@@ -367,7 +367,11 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 	// against. p is named here because a key nobody is told about is the
 	// same lie as a flag that does nothing -- it is just harder to notice.
 	right := m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)) +
-		m.label().Render("  p view  q quit")
+		m.label().Render("  p view")
+	if m.preset > 0 {
+		right += m.label().Render(fmt.Sprintf("  preset %d  P next", m.preset))
+	}
+	right += m.label().Render("  q quit")
 
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {

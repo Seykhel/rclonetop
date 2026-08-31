@@ -84,6 +84,9 @@ func run() error {
 	// The file is laid underneath the command line rather than over it, so that
 	// a flag typed now always beats a setting saved months ago.
 	flags = applyConfig(flags, cfg)
+	if flags.preset > 1 && flags.presets[flags.preset] == "" {
+		return fmt.Errorf("--preset %d is not defined in the configuration", flags.preset)
+	}
 
 	th, err := theme.Load(flags.themeName)
 	if err != nil {
@@ -186,6 +189,7 @@ func run() error {
 		GraphSymbol: symbol,
 		ClockLayout: flags.clockLayout,
 		Preset:      flags.preset,
+		Presets:     flags.presets,
 		ShownBoxes:  flags.shownBoxes,
 		Host:        host,
 	}, cancel)
