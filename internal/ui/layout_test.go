@@ -198,6 +198,34 @@ func TestTheSecondColumnArrivesAtItsOwnWidth(t *testing.T) {
 	}
 }
 
+func TestPresetParsesColumnsAndWeights(t *testing.T) {
+	p, err := parsePreset("transfers:0:2 status:1:3")
+	if err != nil {
+		t.Fatalf("parsePreset: %v", err)
+	}
+	if !p.configured || !p.shown[panelTransfers] || p.column[panelStatus] != 1 || p.weight[panelStatus] != 3 {
+		t.Fatalf("unexpected preset: %+v", p)
+	}
+}
+
+func TestPresetLayoutUsesConfiguredColumnsAndWeights(t *testing.T) {
+	p, err := parsePreset("transfers:0:1 files:0:3 bandwidth:1:1 status:1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := planLayoutWithPreset(140, 40, panelRows{}, p.shown, &p)
+	var heights [len(panels)]int
+	for _, panel := range l.panels {
+		heights[panel.kind] = panel.h
+	}
+	if heights[panelFiles] <= heights[panelTransfers] {
+		t.Errorf("weights did not affect left column: transfers=%d files=%d", heights[panelTransfers], heights[panelFiles])
+	}
+	if panels[panelTransfers].minRows > heights[panelTransfers] {
+		t.Errorf("panel squeezed")
+	}
+}
+
 // The sweep #11 asks for, as properties rather than as expected rectangles: at
 // every size the plan covers the screen once. Whatever the arithmetic does with
 // an odd number of rows or a column that lost its only growing panel, it may not

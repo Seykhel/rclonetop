@@ -222,6 +222,43 @@ func TestADigitTogglesAPanelOffAndOn(t *testing.T) {
 	}
 }
 
+func TestUppercasePVisitsOnlyConfiguredPresets(t *testing.T) {
+	m := New(nil, Options{Preset: 1, Presets: [10]string{"", "", "", "transfers:0:1"}}, nil)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	got := next.(Model)
+	if got.preset != 3 || got.framedPreset != 3 {
+		t.Fatalf("P selected preset %d, want 3", got.preset)
+	}
+}
+
+func TestUppercasePFromDenseVisitsBuiltInPresetFirst(t *testing.T) {
+	m := New(nil, Options{Presets: [10]string{"", "", "", "transfers:0:1"}}, nil)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	if got := next.(Model).preset; got != 1 {
+		t.Fatalf("P from dense selected preset %d, want 1", got)
+	}
+}
+
+func TestPresetSwitchRestoresEachPresetPanels(t *testing.T) {
+	m := New(nil, Options{Preset: 1, Presets: [10]string{"", "transfers:0:1 files:0:3", "", "status:1:1"}}, nil)
+	m.width, m.height = 120, 40
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = next.(Model)
+	if m.shown[panelFiles] {
+		t.Fatal("files should be hidden in preset 1")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m = next.(Model)
+	if m.preset != 3 || !m.shown[panelStatus] {
+		t.Fatal("preset 3 was not restored")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m = next.(Model)
+	if m.preset != 1 || m.shown[panelFiles] {
+		t.Fatal("preset 1 runtime toggle leaked or was lost")
+	}
+}
+
 // The digit keys name a box, and in the dense view there is no box for them
 // to name -- pressing one there must not quietly change state a switch to
 // the framed view would then reveal.

@@ -28,7 +28,11 @@ func (m Model) renderFramed() string {
 	width := effectiveWidth(m.width)
 	v := m.state.Resolve()
 
-	plan := planLayout(m.width, m.height, m.panelDemand(v, width), m.shown)
+	var preset *presetLayout
+	if m.presetLayouts[m.preset].configured {
+		preset = &m.presetLayouts[m.preset]
+	}
+	plan := planLayoutWithPreset(m.width, m.height, m.panelDemand(v, width), m.shown, preset)
 	if plan.dense {
 		return m.renderDense()
 	}

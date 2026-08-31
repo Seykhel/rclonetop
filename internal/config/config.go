@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/Seykhel/rclonetop/internal/preset"
 )
 
 // Name is the file looked for in each of the search directories.
@@ -79,6 +81,15 @@ type Config struct {
 	// unrecognised name is dropped where that vocabulary actually lives,
 	// internal/ui, not refused here.
 	ShownBoxes string
+	Preset1    string
+	Preset2    string
+	Preset3    string
+	Preset4    string
+	Preset5    string
+	Preset6    string
+	Preset7    string
+	Preset8    string
+	Preset9    string
 }
 
 // Defaults is the configuration rclonetop uses when no file is found. It must
@@ -95,7 +106,22 @@ func Defaults() Config {
 		TrueColor:       true,
 		ClockLayout:     "15:04:05",
 		ShownBoxes:      "",
+		Preset1:         "",
+		Preset2:         "",
+		Preset3:         "",
+		Preset4:         "",
+		Preset5:         "",
+		Preset6:         "",
+		Preset7:         "",
+		Preset8:         "",
+		Preset9:         "",
 	}
+}
+
+// Presets returns preset strings indexed by their number. Index zero is the
+// dense view and is intentionally empty.
+func (c Config) Presets() [10]string {
+	return [10]string{"", c.Preset1, c.Preset2, c.Preset3, c.Preset4, c.Preset5, c.Preset6, c.Preset7, c.Preset8, c.Preset9}
 }
 
 // SearchPaths lists the configuration files consulted, in priority order. The
@@ -174,6 +200,12 @@ func parse(name string, r io.Reader) (Config, error) {
 		fail := func(err error) (Config, error) {
 			return cfg, fmt.Errorf("%s:%d: %s: %w", name, line, key, err)
 		}
+		if strings.HasPrefix(key, "preset_") {
+			n, err := strconv.Atoi(strings.TrimPrefix(key, "preset_"))
+			if err == nil && (n < 1 || n > 9) {
+				return fail(fmt.Errorf("preset number must be between 1 and 9, got %d", n))
+			}
+		}
 
 		switch key {
 		case "color_theme":
@@ -235,6 +267,30 @@ func parse(name string, r io.Reader) (Config, error) {
 			// for internal/ui to drop, the same split graph_symbol already
 			// draws between "parsed here" and "interpreted there".
 			cfg.ShownBoxes = value
+		case "preset_1", "preset_2", "preset_3", "preset_4", "preset_5", "preset_6", "preset_7", "preset_8", "preset_9":
+			if _, err := preset.Parse(value); err != nil {
+				return fail(err)
+			}
+			switch key {
+			case "preset_1":
+				cfg.Preset1 = value
+			case "preset_2":
+				cfg.Preset2 = value
+			case "preset_3":
+				cfg.Preset3 = value
+			case "preset_4":
+				cfg.Preset4 = value
+			case "preset_5":
+				cfg.Preset5 = value
+			case "preset_6":
+				cfg.Preset6 = value
+			case "preset_7":
+				cfg.Preset7 = value
+			case "preset_8":
+				cfg.Preset8 = value
+			case "preset_9":
+				cfg.Preset9 = value
+			}
 		case "clock_format":
 			// The one deliberate exception to skipping keys this build does not
 			// know. Every other unrecognised key might be a later version's;
