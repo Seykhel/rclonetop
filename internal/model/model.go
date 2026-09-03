@@ -196,6 +196,9 @@ type JobStats struct {
 	// field from a measured zero.
 	Known  StatsFields
 	Source Source
+	// Sources records the source of each known field when a measurement is a
+	// field-by-field merge of local and RC observations.
+	Sources map[StatsFields]Source
 
 	Bytes      uint64
 	TotalBytes uint64
@@ -238,6 +241,8 @@ const (
 	StatsTotalChecks
 	StatsErrors
 	StatsFatalError
+	StatsDeletes
+	StatsRenames
 	StatsSpeed
 	StatsElapsed
 	StatsETA

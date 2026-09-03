@@ -113,7 +113,7 @@ func (s *State) procRows() []ProcRow {
 		job := s.jobForPID(p.PID)
 		rc := s.rcStatsForAddr(p.RCAddr)
 		if rc != nil {
-			job.Stats = mergeStats(job.Stats, rc.Stats)
+			job.Stats = mergeStats(job.Stats, rc.Stats, job.HaveStats)
 			job.HaveStats = job.HaveStats || rc.Stats.Known != 0
 		}
 		rows = append(rows, ProcRow{
@@ -140,16 +140,26 @@ func (s *State) procRows() []ProcRow {
 // mergeStats prefers RC measurements one field at a time. An endpoint can
 // implement core/stats partially, and an absent field must leave the local log
 // observation intact rather than turn it into a misleading zero.
-func mergeStats(local, exact JobStats) JobStats {
+func mergeStats(local, exact JobStats, localKnown bool) JobStats {
 	merged := local
 	if merged.Source == "" {
 		merged.Source = SourceLog
+	}
+	if merged.Sources == nil {
+		merged.Sources = make(map[StatsFields]Source)
+	}
+	if localKnown {
+		for field := StatsBytes; field <= StatsETA; field <<= 1 {
+			merged.Known |= field
+			merged.Sources[field] = merged.Source
+		}
 	}
 	for field := StatsBytes; field <= StatsETA; field <<= 1 {
 		if exact.Known&field == 0 {
 			continue
 		}
 		merged.Known |= field
+		merged.Sources[field] = SourceRC
 		merged.Source = SourceRC
 		switch field {
 		case StatsBytes:
@@ -168,6 +178,10 @@ func mergeStats(local, exact JobStats) JobStats {
 			merged.Errors = exact.Errors
 		case StatsFatalError:
 			merged.FatalError = exact.FatalError
+		case StatsDeletes:
+			merged.Deletes = exact.Deletes
+		case StatsRenames:
+			merged.Renames = exact.Renames
 		case StatsSpeed:
 			merged.Speed = exact.Speed
 		case StatsElapsed:

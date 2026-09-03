@@ -85,11 +85,25 @@ func (m Model) statsProgress(s model.JobStats, prefix string) string {
 	if prefix != "" {
 		parts = append(parts, m.accentStyle(accentRunning).Render(prefix))
 		if s.Known == 0 || s.Known&(model.StatsBytes|model.StatsTotalBytes) != 0 {
-			parts = append(parts, m.label().Render("bytes ")+m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
-				m.style("div_line").Render(" / ")+m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)))
+			bytes, total := Bytes(s.Bytes, m.opts.Base10), Bytes(s.TotalBytes, m.opts.Base10)
+			if s.Known != 0 && s.Known&model.StatsBytes == 0 {
+				bytes = "?"
+			}
+			if s.Known != 0 && s.Known&model.StatsTotalBytes == 0 {
+				total = "?"
+			}
+			parts = append(parts, m.label().Render("bytes ")+m.value().Render(bytes)+
+				m.style("div_line").Render(" / ")+m.label().Render(total))
 		}
 		if s.Known == 0 || s.Known&(model.StatsTransfers|model.StatsTotalTransfers) != 0 {
-			parts = append(parts, m.label().Render("transfers ")+m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
+			transfers, total := fmt.Sprint(s.Transfers), fmt.Sprint(s.TotalTransfers)
+			if s.Known != 0 && s.Known&model.StatsTransfers == 0 {
+				transfers = "?"
+			}
+			if s.Known != 0 && s.Known&model.StatsTotalTransfers == 0 {
+				total = "?"
+			}
+			parts = append(parts, m.label().Render("transfers ")+m.value().Render(transfers+"/"+total)+
 				m.label().Render(" files"))
 		}
 		if s.Known == 0 || s.Known&model.StatsErrors != 0 {

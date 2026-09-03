@@ -215,11 +215,19 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 	}
 	if raw.Errors != nil {
 		stats.Stats.Errors = *raw.Errors
-		if raw.FatalError != nil {
-			stats.Stats.FatalError = *raw.FatalError
-			stats.Stats.Known |= model.StatsFatalError
-		}
 		stats.Stats.Known |= model.StatsErrors
+	}
+	if raw.FatalError != nil {
+		stats.Stats.FatalError = *raw.FatalError
+		stats.Stats.Known |= model.StatsFatalError
+	}
+	if raw.Deletes != nil {
+		stats.Stats.Deletes = *raw.Deletes
+		stats.Stats.Known |= model.StatsDeletes
+	}
+	if raw.Renames != nil {
+		stats.Stats.Renames = *raw.Renames
+		stats.Stats.Known |= model.StatsRenames
 	}
 	if raw.Speed != nil {
 		stats.Stats.Speed = *raw.Speed
@@ -232,9 +240,7 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 	if raw.ETA != nil {
 		stats.Stats.ETA = time.Duration(*raw.ETA * float64(time.Second))
 		stats.Stats.ETAKnown = *raw.ETA >= 0
-		if stats.Stats.ETAKnown {
-			stats.Stats.Known |= model.StatsETA
-		}
+		stats.Stats.Known |= model.StatsETA
 	}
 	select {
 	case result := <-jobResult:

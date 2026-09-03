@@ -571,6 +571,7 @@ func (t *logTail) consumeJSON(line string) bool {
 // model converts rclone's own accounting into the shared vocabulary.
 func (s jsonStats) model() model.JobStats {
 	stats := model.JobStats{
+		Source:         model.SourceLog,
 		Bytes:          s.Bytes,
 		TotalBytes:     s.TotalBytes,
 		Transfers:      s.Transfers,
@@ -837,7 +838,7 @@ func (t *logTail) statsLine(msg string) {
 		}
 		// The bytes line opens a fresh block, discarding any earlier one that
 		// never reached its "Elapsed time" and therefore never happened.
-		t.pending = &model.JobStats{Bytes: bytes, TotalBytes: total}
+		t.pending = &model.JobStats{Source: model.SourceLog, Bytes: bytes, TotalBytes: total}
 		t.pending.Speed, t.pending.ETA, t.pending.ETAKnown = parseSpeedAndETA(rest)
 
 	case "Checks":
