@@ -225,6 +225,7 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 		m.procMeta(row.Process) + "\n" +
 		m.procThroughput(row.Process, width) + "\n" +
 		m.jobProgress(row.Job) +
+		m.rcProgress(row.RCStats) +
 		m.filesInFlight(row.Job, width) +
 		m.renderErrors(row.Errors, width)
 }

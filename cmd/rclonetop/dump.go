@@ -48,7 +48,7 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		}
 
 		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+
-			len(snap.SyncPairs)+len(snap.Units)+len(snap.Jobs) == 0 {
+			len(snap.SyncPairs)+len(snap.Units)+len(snap.Jobs)+len(snap.RCStats) == 0 {
 			fmt.Fprintln(w, "   nothing found")
 		}
 		for _, mnt := range snap.Mounts {
@@ -122,6 +122,14 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			for _, e := range j.Errors {
 				fmt.Fprintf(w, "      [%d] %s %s\n", e.Priority, stamp(e.At), e.Message)
 			}
+		}
+		for _, r := range snap.RCStats {
+			s := r.Stats
+			fmt.Fprintf(w, "   rc %q  %s / %s in %d/%d files  checks %d/%d  errors %d (fatal %v)\n",
+				r.Addr, ui.Bytes(s.Bytes, base10), ui.Bytes(s.TotalBytes, base10),
+				s.Transfers, s.TotalTransfers, s.Checks, s.TotalChecks, s.Errors, s.FatalError)
+			fmt.Fprintf(w, "      speed %s  elapsed %s  eta %s\n",
+				ui.Rate(s.Speed, base10), ui.Duration(s.Elapsed), eta(s.ETA, s.ETAKnown))
 		}
 		for _, p := range snap.SyncPairs {
 			fmt.Fprintf(w, "   sync %q\n", p.Name)

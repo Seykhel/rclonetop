@@ -32,20 +32,47 @@ func (m Model) jobProgress(job model.Job) string {
 	if !job.HaveStats {
 		return ""
 	}
-	s := job.Stats
+	return m.statsProgress(job.Stats, "")
+}
+
+// rcProgress renders the daemon's exact accounting separately from log-derived
+// job statistics. Both describe progress, but combining them would hide which
+// source produced the measurement.
+func (m Model) rcProgress(stats *model.RCStats) string {
+	if stats == nil {
+		return ""
+	}
+	return m.statsProgress(stats.Stats, "RC ")
+}
+
+func (m Model) statsProgress(s model.JobStats, prefix string) string {
 
 	var parts []string
+	if prefix != "" {
+		parts = append(parts,
+			m.accentStyle(accentRunning).Render(prefix),
+			m.label().Render("bytes ")+m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
+				m.style("div_line").Render(" / ")+m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)),
+			m.label().Render("transfers ")+m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
+				m.label().Render(" files"),
+			m.label().Render("errors ")+m.value().Render(fmt.Sprint(s.Errors)))
+		parts = append(parts,
+			m.label().Render("speed ")+m.value().Render(Rate(s.Speed, m.opts.Base10)),
+			m.label().Render("elapsed ")+m.value().Render(Duration(s.Elapsed)))
+	}
 	if frac, ok := s.Done(); ok {
 		parts = append(parts,
 			m.magnitudeStyle("cpu", frac).Render(fmt.Sprintf("%.0f%%", frac*100)))
 	}
-	if s.TotalBytes > 0 {
+	if prefix == "" && s.TotalBytes > 0 {
 		parts = append(parts,
 			m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
 				m.style("div_line").Render(" / ")+
 				m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)))
 	}
 	switch {
+	case prefix != "":
+		// The exact RC counters were already rendered above, including zeroes.
 	case s.TotalTransfers > 0:
 		parts = append(parts,
 			m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
@@ -58,7 +85,7 @@ func (m Model) jobProgress(job model.Job) string {
 			m.value().Render(fmt.Sprint(s.Checks))+
 				m.label().Render(" checked"))
 	}
-	if s.Errors > 0 {
+	if prefix == "" && s.Errors > 0 {
 		errs := fmt.Sprintf("%d errors", s.Errors)
 		if s.FatalError {
 			errs += ", fatal"

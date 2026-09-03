@@ -37,6 +37,10 @@ type View struct {
 type ProcRow struct {
 	Process Process
 
+	// RCStats is the exact accounting reported by the daemon this process
+	// serves, when that daemon was discovered and answered.
+	RCStats *RCStats
+
 	// Job is what the log this process writes has to say about the run, and the
 	// zero value when no log was found for it.
 	//
@@ -109,6 +113,7 @@ func (s *State) procRows() []ProcRow {
 		job := s.jobForPID(p.PID)
 		rows = append(rows, ProcRow{
 			Process: p,
+			RCStats: s.rcStatsForAddr(p.RCAddr),
 			Job:     job,
 			Errors:  concatLines(s.unitErrorsFor(p), job.Errors),
 		})
@@ -125,6 +130,19 @@ func (s *State) procRows() []ProcRow {
 		return a.ReadRate+a.WriteRate > b.ReadRate+b.WriteRate
 	})
 	return rows
+}
+
+func (s *State) rcStatsForAddr(addr string) *RCStats {
+	if addr == "" {
+		return nil
+	}
+	for i := range s.RCStats {
+		if s.RCStats[i].Addr == addr {
+			stats := s.RCStats[i]
+			return &stats
+		}
+	}
+	return nil
 }
 
 // unitRows builds one row per service worth a line of its own, failures first.

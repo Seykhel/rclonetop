@@ -13,6 +13,27 @@ func stateWith(s State) *State {
 	return &s
 }
 
+func TestRCStatsAreMatchedToTheirProcessByAddress(t *testing.T) {
+	s := stateWith(State{
+		Processes: []Process{
+			{PID: 42, RCAddr: "127.0.0.1:5572"},
+			{PID: 43, RCAddr: "127.0.0.1:5573"},
+		},
+		RCStats: []RCStats{{
+			Addr:  "127.0.0.1:5572",
+			Stats: JobStats{Bytes: 1234, TotalBytes: 5678},
+		}},
+	})
+
+	rows := s.Resolve().Procs
+	if rows[0].RCStats == nil || rows[0].RCStats.Stats.Bytes != 1234 {
+		t.Fatalf("first process did not receive its RC statistics: %+v", rows[0].RCStats)
+	}
+	if rows[1].RCStats != nil {
+		t.Fatalf("unmatched endpoint received statistics: %+v", rows[1].RCStats)
+	}
+}
+
 // A job is matched to a process by PID, and only by PID. The log file was
 // discovered from that process's own command line, so the match is exact --
 // but a job whose process has exited keeps its statistics and reports PID 0,

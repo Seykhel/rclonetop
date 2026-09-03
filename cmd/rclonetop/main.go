@@ -144,8 +144,10 @@ func run() error {
 	bisync := collect.NewBisync()
 	logs := collect.NewLogs()
 	procs := collect.NewProcs()
+	rc := collect.NewRC()
 	procs.OnProcesses(systemd.NoteProcesses)
 	procs.OnProcesses(logs.NoteProcesses)
+	procs.OnProcesses(rc.NoteProcesses)
 	logs.OnPaths(bisync.NotePaths)
 	// And the other way for a job that is not running: the unit names the log
 	// file even between runs, which on a timer is nearly all of the time.
@@ -159,6 +161,7 @@ func run() error {
 	// it was about to tell it.
 	collectors := []collect.Collector{
 		procs,
+		rc,
 		systemd,
 		logs,
 		bisync,

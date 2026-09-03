@@ -102,6 +102,21 @@ func TestParseRCAddr(t *testing.T) {
 	}
 }
 
+func TestCollectPropagatesObservedRCAddr(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "stat"), "btime 1787000000\n")
+	writeFile(t, filepath.Join(root, "self", "stat"), "1 (x) R 0\n")
+	writeProc(t, root, 42, "rclone", []string{"rclone", "rcd", "--rc-addr", "127.0.0.1:5573"}, "VmRSS:\t 10 kB\n", "rchar: 0\nwchar: 0\n")
+
+	snap, err := NewProcsAt(root).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snap.Processes) != 1 || snap.Processes[0].RCAddr != "127.0.0.1:5573" {
+		t.Fatalf("process RC address = %+v", snap.Processes)
+	}
+}
+
 // TestCollectFromFixture drives the collector against a fake procfs, so the
 // parsing is exercised without depending on what happens to be running.
 func TestCollectFromFixture(t *testing.T) {
