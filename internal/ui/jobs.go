@@ -120,20 +120,34 @@ func (m Model) statsProgress(s model.JobStats, prefix string) string {
 		parts = append(parts,
 			m.magnitudeStyle("cpu", frac).Render(fmt.Sprintf("%.0f%%", frac*100)))
 	}
-	if prefix == "" && s.TotalBytes > 0 {
+	if prefix == "" && (s.TotalBytes > 0 || s.Known&(model.StatsBytes|model.StatsTotalBytes) != 0) {
+		bytes, total := Bytes(s.Bytes, m.opts.Base10), Bytes(s.TotalBytes, m.opts.Base10)
+		if s.Known != 0 && s.Known&model.StatsBytes == 0 {
+			bytes = "?"
+		}
+		if s.Known != 0 && s.Known&model.StatsTotalBytes == 0 {
+			total = "?"
+		}
 		parts = append(parts,
-			m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
+			m.value().Render(bytes)+
 				m.style("div_line").Render(" / ")+
-				m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)))
+				m.label().Render(total))
 	}
 	switch {
 	case prefix != "":
 		// The exact RC counters were already rendered above, including zeroes.
-	case s.TotalTransfers > 0:
+	case s.TotalTransfers > 0 || s.Known&(model.StatsTransfers|model.StatsTotalTransfers) != 0:
+		transfers, total := fmt.Sprint(s.Transfers), fmt.Sprint(s.TotalTransfers)
+		if s.Known != 0 && s.Known&model.StatsTransfers == 0 {
+			transfers = "?"
+		}
+		if s.Known != 0 && s.Known&model.StatsTotalTransfers == 0 {
+			total = "?"
+		}
 		parts = append(parts,
-			m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
+			m.value().Render(transfers+"/"+total)+
 				m.label().Render(" files"))
-	case s.Checks > 0:
+	case s.Checks > 0 || s.Known&(model.StatsChecks|model.StatsTotalChecks) != 0:
 		// A bisync with nothing to move is the healthy case, and it would look
 		// idle if the only counters on the line were the transfers it did not
 		// have to make.
@@ -141,12 +155,20 @@ func (m Model) statsProgress(s model.JobStats, prefix string) string {
 			m.value().Render(fmt.Sprint(s.Checks))+
 				m.label().Render(" checked"))
 	}
-	if prefix == "" && s.Errors > 0 {
+	if prefix == "" && (s.Errors > 0 || s.Known&model.StatsErrors != 0) {
 		errs := fmt.Sprintf("%d errors", s.Errors)
 		if s.FatalError {
 			errs += ", fatal"
 		}
 		parts = append(parts, m.alarm().Render(errs))
+	}
+	if prefix == "" && s.Known != 0 {
+		if s.Known&model.StatsSpeed != 0 {
+			parts = append(parts, m.label().Render("speed ")+m.value().Render(Rate(s.Speed, m.opts.Base10)))
+		}
+		if s.Known&model.StatsElapsed != 0 {
+			parts = append(parts, m.label().Render("elapsed ")+m.value().Render(Duration(s.Elapsed)))
+		}
 	}
 	if s.ETAKnown {
 		// Only when rclone says so. It writes "-" whenever it cannot estimate,

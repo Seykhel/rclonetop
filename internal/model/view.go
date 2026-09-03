@@ -160,7 +160,9 @@ func mergeStats(local, exact JobStats, localKnown bool) JobStats {
 		}
 		merged.Known |= field
 		merged.Sources[field] = SourceRC
-		merged.Source = SourceRC
+		if !localKnown {
+			merged.Source = SourceRC
+		}
 		switch field {
 		case StatsBytes:
 			merged.Bytes = exact.Bytes

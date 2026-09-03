@@ -51,8 +51,8 @@ func TestResolvePrefersRCMeasurementsAndKeepsLocalFallbacks(t *testing.T) {
 	if stats.Checks != 3 || stats.TotalChecks != 4 {
 		t.Fatalf("local value was not retained for an absent RC field: %+v", stats)
 	}
-	if stats.Source != SourceRC {
-		t.Errorf("source = %q, want %q", stats.Source, SourceRC)
+	if stats.Source != SourceLog || stats.Sources[StatsBytes] != SourceRC || stats.Sources[StatsChecks] != SourceLog {
+		t.Errorf("sources = %q/%v, want mixed RC and log provenance", stats.Source, stats.Sources)
 	}
 }
 

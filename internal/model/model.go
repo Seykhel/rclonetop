@@ -278,6 +278,9 @@ type RCJob struct {
 // that fraction means anything. A total of zero is a run with nothing to
 // transfer, not a run that is nought per cent complete.
 func (s JobStats) Done() (float64, bool) {
+	if s.Known != 0 && s.Known&(StatsBytes|StatsTotalBytes) != StatsBytes|StatsTotalBytes {
+		return 0, false
+	}
 	if s.TotalBytes == 0 {
 		return 0, false
 	}
