@@ -190,6 +190,13 @@ type LogLine struct {
 // through the kernel, which includes retries and metadata and knows nothing of
 // how many files are still to come; only rclone knows what it set out to do.
 type JobStats struct {
+	// Known identifies measurements an RC response actually supplied. A zero
+	// value means the legacy log representation, whose parsed fields retain the
+	// existing best-effort semantics; RC uses the mask to distinguish an absent
+	// field from a measured zero.
+	Known  StatsFields
+	Source Source
+
 	Bytes      uint64
 	TotalBytes uint64
 
@@ -218,6 +225,23 @@ type JobStats struct {
 	ETA      time.Duration
 	ETAKnown bool
 }
+
+// StatsFields identifies independently optional groups in rclone statistics.
+type StatsFields uint16
+
+const (
+	StatsBytes StatsFields = 1 << iota
+	StatsTotalBytes
+	StatsTransfers
+	StatsTotalTransfers
+	StatsChecks
+	StatsTotalChecks
+	StatsErrors
+	StatsFatalError
+	StatsSpeed
+	StatsElapsed
+	StatsETA
+)
 
 // RCStats is rclone's exact accounting for the work handled by one rc daemon.
 // The address is the only identity available without probing the daemon for a

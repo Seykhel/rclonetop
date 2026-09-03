@@ -32,17 +32,25 @@ func (m Model) jobProgress(job model.Job) string {
 	if !job.HaveStats {
 		return ""
 	}
+	if job.Stats.Source == model.SourceRC {
+		return m.statsProgress(job.Stats, "RC ")
+	}
 	return m.statsProgress(job.Stats, "")
 }
 
-// rcProgress renders the daemon's exact accounting separately from log-derived
-// job statistics. Both describe progress, but combining them would hide which
-// source produced the measurement.
+// rcProgress renders asynchronous daemon jobs. Core statistics are merged into
+// the process job by Resolve, so rendering them here would duplicate them.
 func (m Model) rcProgress(stats *model.RCStats) string {
 	if stats == nil {
 		return ""
 	}
-	line := m.statsProgress(stats.Stats, "RC ")
+	// Core statistics have already been merged into the process job by Resolve.
+	// Keep the old rendering for hand-built legacy values, but do not print the
+	// same measurement twice for an RC response carrying presence metadata.
+	line := ""
+	if stats.Stats.Known == 0 && stats.Stats.Source != model.SourceRC {
+		line = m.statsProgress(stats.Stats, "RC ")
+	}
 	for _, job := range stats.Jobs {
 		line += m.rcJobLine(job)
 	}
@@ -75,16 +83,24 @@ func (m Model) statsProgress(s model.JobStats, prefix string) string {
 
 	var parts []string
 	if prefix != "" {
-		parts = append(parts,
-			m.accentStyle(accentRunning).Render(prefix),
-			m.label().Render("bytes ")+m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
-				m.style("div_line").Render(" / ")+m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)),
-			m.label().Render("transfers ")+m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
-				m.label().Render(" files"),
-			m.label().Render("errors ")+m.value().Render(fmt.Sprint(s.Errors)))
-		parts = append(parts,
-			m.label().Render("speed ")+m.value().Render(Rate(s.Speed, m.opts.Base10)),
-			m.label().Render("elapsed ")+m.value().Render(Duration(s.Elapsed)))
+		parts = append(parts, m.accentStyle(accentRunning).Render(prefix))
+		if s.Known == 0 || s.Known&(model.StatsBytes|model.StatsTotalBytes) != 0 {
+			parts = append(parts, m.label().Render("bytes ")+m.value().Render(Bytes(s.Bytes, m.opts.Base10))+
+				m.style("div_line").Render(" / ")+m.label().Render(Bytes(s.TotalBytes, m.opts.Base10)))
+		}
+		if s.Known == 0 || s.Known&(model.StatsTransfers|model.StatsTotalTransfers) != 0 {
+			parts = append(parts, m.label().Render("transfers ")+m.value().Render(fmt.Sprintf("%d/%d", s.Transfers, s.TotalTransfers))+
+				m.label().Render(" files"))
+		}
+		if s.Known == 0 || s.Known&model.StatsErrors != 0 {
+			parts = append(parts, m.label().Render("errors ")+m.value().Render(fmt.Sprint(s.Errors)))
+		}
+		if s.Known == 0 || s.Known&model.StatsSpeed != 0 {
+			parts = append(parts, m.label().Render("speed ")+m.value().Render(Rate(s.Speed, m.opts.Base10)))
+		}
+		if s.Known == 0 || s.Known&model.StatsElapsed != 0 {
+			parts = append(parts, m.label().Render("elapsed ")+m.value().Render(Duration(s.Elapsed)))
+		}
 	}
 	if frac, ok := s.Done(); ok {
 		parts = append(parts,

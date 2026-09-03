@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -31,6 +32,57 @@ func TestRCStatsAreMatchedToTheirProcessByAddress(t *testing.T) {
 	}
 	if rows[1].RCStats != nil {
 		t.Fatalf("unmatched endpoint received statistics: %+v", rows[1].RCStats)
+	}
+}
+
+func TestResolvePrefersRCMeasurementsAndKeepsLocalFallbacks(t *testing.T) {
+	local := JobStats{Bytes: 10, TotalBytes: 20, Checks: 3, TotalChecks: 4, Speed: 5}
+	exact := JobStats{Bytes: 100, TotalBytes: 200, Speed: 50, Known: StatsBytes | StatsTotalBytes | StatsSpeed, Source: SourceRC}
+	s := stateWith(State{
+		Processes: []Process{{PID: 42, RCAddr: "rc:1"}},
+		Jobs:      []Job{{PID: 42, HaveStats: true, Stats: local}},
+		RCStats:   []RCStats{{Addr: "rc:1", Stats: exact}},
+	})
+
+	stats := s.Resolve().Procs[0].Job.Stats
+	if stats.Bytes != 100 || stats.TotalBytes != 200 || stats.Speed != 50 {
+		t.Fatalf("RC values did not win: %+v", stats)
+	}
+	if stats.Checks != 3 || stats.TotalChecks != 4 {
+		t.Fatalf("local value was not retained for an absent RC field: %+v", stats)
+	}
+	if stats.Source != SourceRC {
+		t.Errorf("source = %q, want %q", stats.Source, SourceRC)
+	}
+}
+
+func TestResolveUsesRCZeroAsAMeasurement(t *testing.T) {
+	s := stateWith(State{
+		Processes: []Process{{PID: 42, RCAddr: "rc:1"}},
+		Jobs:      []Job{{PID: 42, HaveStats: true, Stats: JobStats{Bytes: 9, TotalBytes: 10}}},
+		RCStats: []RCStats{{Addr: "rc:1", Stats: JobStats{
+			Known: StatsBytes, Source: SourceRC,
+		}}},
+	})
+	if got := s.Resolve().Procs[0].Job.Stats.Bytes; got != 0 {
+		t.Fatalf("RC zero was treated as absent: got %d", got)
+	}
+}
+
+func TestRCFailureDoesNotEraseLastValidLocalMeasurement(t *testing.T) {
+	s := NewState()
+	s.Apply(Snapshot{Source: SourceLog, At: time.Unix(1, 0), Jobs: []Job{{
+		PID: 42, HaveStats: true, Stats: JobStats{Bytes: 7, TotalBytes: 9},
+	}}})
+	s.Fail(SourceRC, context.Canceled)
+	s.Apply(Snapshot{Source: SourceProc, At: time.Unix(2, 0), Processes: []Process{{PID: 42, RCAddr: "rc:1"}}})
+
+	row := s.Resolve().Procs[0]
+	if row.Job.Stats.Bytes != 7 || row.Job.Stats.TotalBytes != 9 {
+		t.Fatalf("local measurement was lost after RC failure: %+v", row.Job.Stats)
+	}
+	if row.RCStats != nil {
+		t.Fatalf("failed RC source produced statistics: %+v", row.RCStats)
 	}
 }
 

@@ -110,18 +110,18 @@ func (r *RC) Collect(ctx context.Context) (model.Snapshot, error) {
 }
 
 type coreStatsResponse struct {
-	Bytes          uint64   `json:"bytes"`
-	TotalBytes     uint64   `json:"totalBytes"`
-	Transfers      int      `json:"transfers"`
-	TotalTransfers int      `json:"totalTransfers"`
-	Checks         int      `json:"checks"`
-	TotalChecks    int      `json:"totalChecks"`
-	Errors         int      `json:"errors"`
-	FatalError     bool     `json:"fatalError"`
-	Deletes        int      `json:"deletes"`
-	Renames        int      `json:"renames"`
-	Speed          float64  `json:"speed"`
-	ElapsedTime    float64  `json:"elapsedTime"`
+	Bytes          *uint64  `json:"bytes"`
+	TotalBytes     *uint64  `json:"totalBytes"`
+	Transfers      *int     `json:"transfers"`
+	TotalTransfers *int     `json:"totalTransfers"`
+	Checks         *int     `json:"checks"`
+	TotalChecks    *int     `json:"totalChecks"`
+	Errors         *int     `json:"errors"`
+	FatalError     *bool    `json:"fatalError"`
+	Deletes        *int     `json:"deletes"`
+	Renames        *int     `json:"renames"`
+	Speed          *float64 `json:"speed"`
+	ElapsedTime    *float64 `json:"elapsedTime"`
 	ETA            *float64 `json:"eta"`
 }
 
@@ -187,22 +187,54 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 		Addr:   addr,
 		At:     time.Now(),
 		Source: model.SourceRC,
-		Stats: model.JobStats{
-			Bytes: raw.Bytes, TotalBytes: raw.TotalBytes,
-			Transfers: raw.Transfers, TotalTransfers: raw.TotalTransfers,
-			Checks: raw.Checks, TotalChecks: raw.TotalChecks,
-			Errors: raw.Errors, FatalError: raw.FatalError,
-			Deletes: raw.Deletes, Renames: raw.Renames,
-			Speed:   raw.Speed,
-			Elapsed: time.Duration(raw.ElapsedTime * float64(time.Second)),
-			ETA: func() time.Duration {
-				if raw.ETA == nil {
-					return 0
-				}
-				return time.Duration(*raw.ETA * float64(time.Second))
-			}(),
-			ETAKnown: raw.ETA != nil && *raw.ETA >= 0,
-		},
+		Stats:  model.JobStats{Source: model.SourceRC},
+	}
+	if raw.Bytes != nil {
+		stats.Stats.Bytes = *raw.Bytes
+		stats.Stats.Known |= model.StatsBytes
+	}
+	if raw.TotalBytes != nil {
+		stats.Stats.TotalBytes = *raw.TotalBytes
+		stats.Stats.Known |= model.StatsTotalBytes
+	}
+	if raw.Transfers != nil {
+		stats.Stats.Transfers = *raw.Transfers
+		stats.Stats.Known |= model.StatsTransfers
+	}
+	if raw.TotalTransfers != nil {
+		stats.Stats.TotalTransfers = *raw.TotalTransfers
+		stats.Stats.Known |= model.StatsTotalTransfers
+	}
+	if raw.Checks != nil {
+		stats.Stats.Checks = *raw.Checks
+		stats.Stats.Known |= model.StatsChecks
+	}
+	if raw.TotalChecks != nil {
+		stats.Stats.TotalChecks = *raw.TotalChecks
+		stats.Stats.Known |= model.StatsTotalChecks
+	}
+	if raw.Errors != nil {
+		stats.Stats.Errors = *raw.Errors
+		if raw.FatalError != nil {
+			stats.Stats.FatalError = *raw.FatalError
+			stats.Stats.Known |= model.StatsFatalError
+		}
+		stats.Stats.Known |= model.StatsErrors
+	}
+	if raw.Speed != nil {
+		stats.Stats.Speed = *raw.Speed
+		stats.Stats.Known |= model.StatsSpeed
+	}
+	if raw.ElapsedTime != nil {
+		stats.Stats.Elapsed = time.Duration(*raw.ElapsedTime * float64(time.Second))
+		stats.Stats.Known |= model.StatsElapsed
+	}
+	if raw.ETA != nil {
+		stats.Stats.ETA = time.Duration(*raw.ETA * float64(time.Second))
+		stats.Stats.ETAKnown = *raw.ETA >= 0
+		if stats.Stats.ETAKnown {
+			stats.Stats.Known |= model.StatsETA
+		}
 	}
 	select {
 	case result := <-jobResult:
