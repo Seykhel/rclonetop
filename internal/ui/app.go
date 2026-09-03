@@ -176,6 +176,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resultMsg:
 		res := collect.Result(msg)
 		if res.Err != nil {
+			// A collector may have valid data from some subjects and an error
+			// from others. Apply the useful part before retaining the error.
+			if res.Snapshot.Source != "" {
+				m.state.Apply(res.Snapshot)
+			}
 			m.state.Fail(res.Source, res.Err)
 		} else {
 			m.state.Apply(res.Snapshot)

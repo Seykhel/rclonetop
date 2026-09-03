@@ -69,6 +69,23 @@ func TestProgressLineShowsHowFarAlongTheRunIs(t *testing.T) {
 	}
 }
 
+func TestRCProgressIsShownAlongsideTheProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:  proc.RCAddr,
+		Stats: model.JobStats{Bytes: 100, TotalBytes: 200, Transfers: 1, TotalTransfers: 2, Speed: 12.5, Elapsed: 3 * time.Second},
+	}}
+
+	got := plainProcess(m, proc, 80)
+	for _, want := range []string{"RC ", "50%", "100 B / 200 B", "1/2 files", "speed 12 B/s", "elapsed 3s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 // Until the first statistics block lands there is nothing to say, and a bar at
 // nought per cent would be a claim about progress rather than a report of it.
 func TestProgressLineIsSuppressedWithoutStatistics(t *testing.T) {

@@ -268,6 +268,7 @@ func (m Model) transfersBody(v model.View, width int) []string {
 	for _, row := range v.Procs {
 		lines = append(lines, m.procHead(row.Process, width), m.procMeta(row.Process))
 		lines = append(lines, bodyLines(m.jobProgress(row.Job))...)
+		lines = append(lines, bodyLines(m.rcProgress(row.RCStats))...)
 		if frac, ok := row.Job.Stats.Done(); ok {
 			// The bar the dense view has no room for, under the
 			// figures it restates. Graded along "cpu", the same ramp

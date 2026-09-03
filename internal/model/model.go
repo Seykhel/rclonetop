@@ -219,6 +219,16 @@ type JobStats struct {
 	ETAKnown bool
 }
 
+// RCStats is rclone's exact accounting for the work handled by one rc daemon.
+// The address is the only identity available without probing the daemon for a
+// process id, and keeping it here lets Resolve associate the answer safely.
+type RCStats struct {
+	Addr   string
+	Stats  JobStats
+	At     time.Time
+	Source Source
+}
+
 // Done reports the fraction of the run's bytes that have moved, and whether
 // that fraction means anything. A total of zero is a run with nothing to
 // transfer, not a run that is nought per cent complete.
@@ -493,6 +503,7 @@ type Snapshot struct {
 	SyncPairs []SyncPair
 	Units     []Unit
 	Jobs      []Job
+	RCStats   []RCStats
 }
 
 // State is the merged view the UI renders, assembled from the most recent
@@ -504,6 +515,7 @@ type State struct {
 	SyncPairs []SyncPair
 	Units     []Unit
 	Jobs      []Job
+	RCStats   []RCStats
 
 	// Seen records the last time each collector reported successfully, so
 	// the UI can tell "nothing is happening" apart from "this source went
@@ -550,6 +562,9 @@ func (s *State) Apply(snap Snapshot) {
 	}
 	if snap.Jobs != nil {
 		s.Jobs = snap.Jobs
+	}
+	if snap.RCStats != nil {
+		s.RCStats = snap.RCStats
 	}
 	s.Seen[snap.Source] = snap.At
 	delete(s.Errors, snap.Source)
