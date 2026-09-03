@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 )
 
 const rcTimeout = 2 * time.Second
+const rcJobTimeout = 500 * time.Millisecond
+const maxRCJobs = 256
 
 // RC reads rclone's read-only remote-control API from addresses already found
 // in the process table. It never guesses an address and never scans the host.
@@ -77,14 +80,26 @@ func (r *RC) Collect(ctx context.Context) (model.Snapshot, error) {
 		RCStats: make([]model.RCStats, 0, len(addrs)),
 	}
 	var errs []string
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	for _, addr := range addrs {
-		stats, err := r.stats(ctx, addr)
-		if err != nil {
-			errs = append(errs, err.Error())
-			continue
-		}
-		snap.RCStats = append(snap.RCStats, stats)
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			stats, err := r.stats(ctx, addr)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if stats.Addr != "" {
+					snap.RCStats = append(snap.RCStats, stats)
+				}
+				errs = append(errs, err.Error())
+				return
+			}
+			snap.RCStats = append(snap.RCStats, stats)
+		}(addr)
 	}
+	wg.Wait()
 	if len(errs) > 0 {
 		if len(snap.RCStats) == 0 {
 			return model.Snapshot{}, fmt.Errorf("rc: %s", strings.Join(errs, "; "))
@@ -110,12 +125,40 @@ type coreStatsResponse struct {
 	ETA            *float64 `json:"eta"`
 }
 
+type jobListResponse struct {
+	JobIDs *[]int `json:"jobids"`
+}
+
+type jobStatusResponse struct {
+	Finished  *bool   `json:"finished"`
+	Success   *bool   `json:"success"`
+	Error     string  `json:"error"`
+	Group     string  `json:"group"`
+	Duration  float64 `json:"duration"`
+	StartTime string  `json:"startTime"`
+	EndTime   string  `json:"endTime"`
+}
+
 func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 	url := addr
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		url = "http://" + url
 	}
-	url = strings.TrimRight(url, "/") + "/core/stats"
+	base := strings.TrimRight(url, "/")
+	jobCtx, cancelJobs := context.WithTimeout(ctx, rcJobTimeout)
+	defer cancelJobs()
+	jobResult := make(chan struct {
+		jobs []model.RCJob
+		err  error
+	}, 1)
+	go func() {
+		jobs, err := r.jobs(jobCtx, base)
+		jobResult <- struct {
+			jobs []model.RCJob
+			err  error
+		}{jobs, err}
+	}()
+	url = base + "/core/stats"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
 	if err != nil {
 		return model.RCStats{}, fmt.Errorf("%s: %w", addr, err)
@@ -140,7 +183,7 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 		}
 		return model.RCStats{}, fmt.Errorf("%s: invalid core/stats response: trailing data: %w", addr, err)
 	}
-	return model.RCStats{
+	stats := model.RCStats{
 		Addr:   addr,
 		At:     time.Now(),
 		Source: model.SourceRC,
@@ -160,5 +203,131 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 			}(),
 			ETAKnown: raw.ETA != nil && *raw.ETA >= 0,
 		},
-	}, nil
+	}
+	select {
+	case result := <-jobResult:
+		stats.Jobs = result.jobs
+		if result.err != nil {
+			return stats, result.err
+		}
+	case <-jobCtx.Done():
+		return stats, fmt.Errorf("%s: job polling: %w", addr, jobCtx.Err())
+	}
+	return stats, nil
+}
+
+func (r *RC) jobs(ctx context.Context, addr string) ([]model.RCJob, error) {
+	var listed jobListResponse
+	if err := r.postJSON(ctx, addr, "/job/list", "{}", &listed); err != nil {
+		return nil, err
+	}
+	if listed.JobIDs == nil {
+		return nil, fmt.Errorf("%s/job/list: invalid response: missing jobids", addr)
+	}
+	if len(*listed.JobIDs) > maxRCJobs {
+		return nil, fmt.Errorf("%s/job/list: too many jobs (%d, maximum %d)", addr, len(*listed.JobIDs), maxRCJobs)
+	}
+	jobs := make([]model.RCJob, 0, len(*listed.JobIDs))
+	results := make([]model.RCJob, len(*listed.JobIDs))
+	valid := make([]bool, len(*listed.JobIDs))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []string
+	for i, id := range *listed.JobIDs {
+		wg.Add(1)
+		go func(i, id int) {
+			defer wg.Done()
+			if id <= 0 {
+				mu.Lock()
+				errs = append(errs, "invalid job id "+strconv.Itoa(id))
+				mu.Unlock()
+				return
+			}
+			var raw jobStatusResponse
+			body := `{"jobid":` + strconv.Itoa(id) + `}`
+			if err := r.postJSON(ctx, addr, "/job/status", body, &raw); err != nil {
+				mu.Lock()
+				errs = append(errs, err.Error())
+				mu.Unlock()
+				return
+			}
+			if raw.Finished == nil {
+				mu.Lock()
+				errs = append(errs, fmt.Sprintf("%s job %d: invalid response: missing finished", addr, id))
+				mu.Unlock()
+				return
+			}
+			job := model.RCJob{ID: id, Group: raw.Group, Finished: *raw.Finished, Error: raw.Error,
+				Duration: time.Duration(raw.Duration * float64(time.Second))}
+			if raw.Success != nil {
+				job.Success, job.SuccessKnown = *raw.Success, true
+			}
+			var err error
+			job.StartTime, err = parseRCTime(raw.StartTime)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Sprintf("%s job %d: invalid startTime: %v", addr, id, err))
+				mu.Unlock()
+				return
+			}
+			job.EndTime, err = parseRCTime(raw.EndTime)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Sprintf("%s job %d: invalid endTime: %v", addr, id, err))
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			results[i], valid[i] = job, true
+			mu.Unlock()
+		}(i, id)
+	}
+	wg.Wait()
+	for i := range results {
+		if valid[i] {
+			jobs = append(jobs, results[i])
+		}
+	}
+	if len(errs) > 0 {
+		return jobs, fmt.Errorf("%s: %s", addr, strings.Join(errs, "; "))
+	}
+	return jobs, nil
+}
+
+func (r *RC) postJSON(ctx context.Context, addr, path, body string, out any) error {
+	url := strings.TrimRight(addr, "/")
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "http://" + url
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+path, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%s%s: %w", addr, path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s%s: %w", addr, path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("%s%s: HTTP %s", addr, path, resp.Status)
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
+	if err := decoder.Decode(out); err != nil {
+		return fmt.Errorf("%s%s: invalid response: %w", addr, path, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("%s%s: invalid response: multiple JSON values", addr, path)
+		}
+		return fmt.Errorf("%s%s: invalid response: trailing data: %w", addr, path, err)
+	}
+	return nil
+}
+
+func parseRCTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339Nano, value)
 }

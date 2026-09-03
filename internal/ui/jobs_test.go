@@ -86,6 +86,28 @@ func TestRCProgressIsShownAlongsideTheProcess(t *testing.T) {
 	}
 }
 
+func TestAsyncRCJobsShowKnownOutcomesWithoutInventingOne(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{Addr: proc.RCAddr, Jobs: []model.RCJob{
+		{ID: 1},
+		{ID: 2, Finished: true, Success: true, SuccessKnown: true},
+		{ID: 3, Finished: true, SuccessKnown: true, Error: "remote failed"},
+		{ID: 4, Finished: true},
+	}}}
+
+	got := plainProcess(m, proc, 100)
+	for _, want := range []string{"job #1 running", "job #2 successful", "job #3 failed", "remote failed", "job #4 finished"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "job #4 failed") {
+		t.Errorf("missing success field was rendered as failure:\n%s", got)
+	}
+}
+
 // Until the first statistics block lands there is nothing to say, and a bar at
 // nought per cent would be a claim about progress rather than a report of it.
 func TestProgressLineIsSuppressedWithoutStatistics(t *testing.T) {

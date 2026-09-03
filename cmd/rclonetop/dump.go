@@ -38,13 +38,21 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 		snap, err := c.Collect(ctx)
 		if err != nil {
 			fmt.Fprintf(w, "   error: %v\n", err)
-			continue
-		}
-		time.Sleep(500 * time.Millisecond)
-		snap, err = c.Collect(ctx)
-		if err != nil {
-			fmt.Fprintf(w, "   error: %v\n", err)
-			continue
+			// Some collectors retain useful partial data alongside an error.
+			// Keep that data in the diagnostic instead of hiding it behind the
+			// error line.
+			if snap.Source == "" {
+				continue
+			}
+		} else {
+			time.Sleep(500 * time.Millisecond)
+			snap, err = c.Collect(ctx)
+			if err != nil {
+				fmt.Fprintf(w, "   error: %v\n", err)
+				if snap.Source == "" {
+					continue
+				}
+			}
 		}
 
 		if len(snap.Processes)+len(snap.Mounts)+len(snap.Caches)+
@@ -130,6 +138,19 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 				s.Transfers, s.TotalTransfers, s.Checks, s.TotalChecks, s.Errors, s.FatalError)
 			fmt.Fprintf(w, "      speed %s  elapsed %s  eta %s\n",
 				ui.Rate(s.Speed, base10), ui.Duration(s.Elapsed), eta(s.ETA, s.ETAKnown))
+			for _, j := range r.Jobs {
+				state := "running"
+				if j.Finished {
+					state = "finished"
+					if j.SuccessKnown {
+						state = "successful"
+						if !j.Success {
+							state = "failed"
+						}
+					}
+				}
+				fmt.Fprintf(w, "      async job %d  %s  error=%q\n", j.ID, state, j.Error)
+			}
 		}
 		for _, p := range snap.SyncPairs {
 			fmt.Fprintf(w, "   sync %q\n", p.Name)

@@ -42,7 +42,33 @@ func (m Model) rcProgress(stats *model.RCStats) string {
 	if stats == nil {
 		return ""
 	}
-	return m.statsProgress(stats.Stats, "RC ")
+	line := m.statsProgress(stats.Stats, "RC ")
+	for _, job := range stats.Jobs {
+		line += m.rcJobLine(job)
+	}
+	return line
+}
+
+func (m Model) rcJobLine(job model.RCJob) string {
+	state := "running"
+	style := m.accentStyle(accentRunning)
+	if job.Finished {
+		if !job.SuccessKnown {
+			state = "finished"
+			style = m.style("inactive_fg")
+		} else if job.Success {
+			state = "successful"
+		} else {
+			state = "failed"
+			style = m.alarm()
+		}
+	}
+	line := "  " + m.label().Render("job ") + m.value().Render(fmt.Sprintf("#%d", job.ID)) +
+		m.style("div_line").Render(" ") + style.Render(state)
+	if job.Error != "" {
+		line += m.style("div_line").Render(": ") + m.alarm().Render(oneLine(job.Error))
+	}
+	return line + "\n"
 }
 
 func (m Model) statsProgress(s model.JobStats, prefix string) string {

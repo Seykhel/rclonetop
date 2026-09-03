@@ -225,8 +225,24 @@ type JobStats struct {
 type RCStats struct {
 	Addr   string
 	Stats  JobStats
+	Jobs   []RCJob
 	At     time.Time
 	Source Source
+}
+
+// RCJob is the lifecycle record rclone exposes for an asynchronous rc job.
+// SuccessKnown matters because a missing success field is not evidence of a
+// failure: older daemons and malformed responses must not be rendered as one.
+type RCJob struct {
+	ID           int
+	Group        string
+	Finished     bool
+	Success      bool
+	SuccessKnown bool
+	Error        string
+	Duration     time.Duration
+	StartTime    time.Time
+	EndTime      time.Time
 }
 
 // Done reports the fraction of the run's bytes that have moved, and whether
