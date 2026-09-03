@@ -149,9 +149,13 @@ func mergeStats(local, exact JobStats, localKnown bool) JobStats {
 		merged.Sources = make(map[StatsFields]Source)
 	}
 	if localKnown {
+		if merged.Known == 0 {
+			merged.Known = allStatsFields
+		}
 		for field := StatsBytes; field <= StatsETA; field <<= 1 {
-			merged.Known |= field
-			merged.Sources[field] = merged.Source
+			if merged.Known&field != 0 {
+				merged.Sources[field] = merged.Source
+			}
 		}
 	}
 	for field := StatsBytes; field <= StatsETA; field <<= 1 {
@@ -194,6 +198,8 @@ func mergeStats(local, exact JobStats, localKnown bool) JobStats {
 	}
 	return merged
 }
+
+const allStatsFields StatsFields = StatsBytes | StatsTotalBytes | StatsTransfers | StatsTotalTransfers | StatsChecks | StatsTotalChecks | StatsErrors | StatsFatalError | StatsDeletes | StatsRenames | StatsSpeed | StatsElapsed | StatsETA
 
 func (s *State) rcStatsForAddr(addr string) *RCStats {
 	if addr == "" {

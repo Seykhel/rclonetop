@@ -572,6 +572,7 @@ func (t *logTail) consumeJSON(line string) bool {
 func (s jsonStats) model() model.JobStats {
 	stats := model.JobStats{
 		Source:         model.SourceLog,
+		Known:          model.StatsBytes | model.StatsTotalBytes | model.StatsTransfers | model.StatsTotalTransfers | model.StatsChecks | model.StatsTotalChecks | model.StatsErrors | model.StatsFatalError | model.StatsDeletes | model.StatsRenames | model.StatsSpeed | model.StatsElapsed,
 		Bytes:          s.Bytes,
 		TotalBytes:     s.TotalBytes,
 		Transfers:      s.Transfers,
@@ -828,6 +829,7 @@ func (t *logTail) statsLine(msg string) {
 			// transferred, so it cannot be the one that opens the block.
 			if t.pending != nil {
 				t.pending.Transfers, t.pending.TotalTransfers = done, total
+				t.pending.Known |= model.StatsTransfers | model.StatsTotalTransfers
 			}
 			return
 		}
@@ -838,8 +840,12 @@ func (t *logTail) statsLine(msg string) {
 		}
 		// The bytes line opens a fresh block, discarding any earlier one that
 		// never reached its "Elapsed time" and therefore never happened.
-		t.pending = &model.JobStats{Source: model.SourceLog, Bytes: bytes, TotalBytes: total}
+		t.pending = &model.JobStats{Source: model.SourceLog, Known: model.StatsBytes | model.StatsTotalBytes, Bytes: bytes, TotalBytes: total}
 		t.pending.Speed, t.pending.ETA, t.pending.ETAKnown = parseSpeedAndETA(rest)
+		t.pending.Known |= model.StatsSpeed
+		if t.pending.ETAKnown {
+			t.pending.Known |= model.StatsETA
+		}
 
 	case "Checks":
 		if t.pending == nil {
@@ -851,6 +857,7 @@ func (t *logTail) statsLine(msg string) {
 		}
 		if done, total, ok := parseCounts(left, right); ok {
 			t.pending.Checks, t.pending.TotalChecks = done, total
+			t.pending.Known |= model.StatsChecks | model.StatsTotalChecks
 		}
 
 	case "Errors":
@@ -859,8 +866,10 @@ func (t *logTail) statsLine(msg string) {
 		}
 		if n, ok := leadingInt(rest); ok {
 			t.pending.Errors = n
+			t.pending.Known |= model.StatsErrors
 		}
 		t.pending.FatalError = strings.Contains(rest, "fatal error")
+		t.pending.Known |= model.StatsFatalError
 
 	case "Deleted":
 		if t.pending == nil {
@@ -868,6 +877,7 @@ func (t *logTail) statsLine(msg string) {
 		}
 		if n, ok := leadingInt(rest); ok {
 			t.pending.Deletes = n
+			t.pending.Known |= model.StatsDeletes
 		}
 
 	case "Renamed":
@@ -876,6 +886,7 @@ func (t *logTail) statsLine(msg string) {
 		}
 		if n, ok := leadingInt(rest); ok {
 			t.pending.Renames = n
+			t.pending.Known |= model.StatsRenames
 		}
 
 	case "Elapsed time":
@@ -884,6 +895,7 @@ func (t *logTail) statsLine(msg string) {
 		}
 		if d, ok := parseLogDuration(rest); ok {
 			t.pending.Elapsed = d
+			t.pending.Known |= model.StatsElapsed
 		}
 		// The block is complete, so it becomes the sample.
 		t.commit(*t.pending)
