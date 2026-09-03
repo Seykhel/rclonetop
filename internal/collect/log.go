@@ -448,18 +448,18 @@ type jsonEntry struct {
 // rounded to three decimals on the way out, which is why it is preferred
 // wherever it appears.
 type jsonStats struct {
-	Bytes          uint64  `json:"bytes"`
-	TotalBytes     uint64  `json:"totalBytes"`
-	Transfers      int     `json:"transfers"`
-	TotalTransfers int     `json:"totalTransfers"`
-	Checks         int     `json:"checks"`
-	TotalChecks    int     `json:"totalChecks"`
-	Errors         int     `json:"errors"`
-	FatalError     bool    `json:"fatalError"`
-	Deletes        int     `json:"deletes"`
-	Renames        int     `json:"renames"`
-	Speed          float64 `json:"speed"`
-	ElapsedTime    float64 `json:"elapsedTime"`
+	Bytes          *uint64  `json:"bytes"`
+	TotalBytes     *uint64  `json:"totalBytes"`
+	Transfers      *int     `json:"transfers"`
+	TotalTransfers *int     `json:"totalTransfers"`
+	Checks         *int     `json:"checks"`
+	TotalChecks    *int     `json:"totalChecks"`
+	Errors         *int     `json:"errors"`
+	FatalError     *bool    `json:"fatalError"`
+	Deletes        *int     `json:"deletes"`
+	Renames        *int     `json:"renames"`
+	Speed          *float64 `json:"speed"`
+	ElapsedTime    *float64 `json:"elapsedTime"`
 
 	// ETA is a pointer because rclone writes null whenever it cannot estimate,
 	// and a nil pointer is the only way to tell that apart from an estimate of
@@ -570,21 +570,42 @@ func (t *logTail) consumeJSON(line string) bool {
 
 // model converts rclone's own accounting into the shared vocabulary.
 func (s jsonStats) model() model.JobStats {
-	stats := model.JobStats{
-		Source:         model.SourceLog,
-		Known:          model.StatsBytes | model.StatsTotalBytes | model.StatsTransfers | model.StatsTotalTransfers | model.StatsChecks | model.StatsTotalChecks | model.StatsErrors | model.StatsFatalError | model.StatsDeletes | model.StatsRenames | model.StatsSpeed | model.StatsElapsed,
-		Bytes:          s.Bytes,
-		TotalBytes:     s.TotalBytes,
-		Transfers:      s.Transfers,
-		TotalTransfers: s.TotalTransfers,
-		Checks:         s.Checks,
-		TotalChecks:    s.TotalChecks,
-		Errors:         s.Errors,
-		FatalError:     s.FatalError,
-		Deletes:        s.Deletes,
-		Renames:        s.Renames,
-		Speed:          s.Speed,
-		Elapsed:        time.Duration(s.ElapsedTime * float64(time.Second)),
+	stats := model.JobStats{Source: model.SourceLog}
+	if s.Bytes != nil {
+		stats.Bytes, stats.Known = *s.Bytes, stats.Known|model.StatsBytes
+	}
+	if s.TotalBytes != nil {
+		stats.TotalBytes, stats.Known = *s.TotalBytes, stats.Known|model.StatsTotalBytes
+	}
+	if s.Transfers != nil {
+		stats.Transfers, stats.Known = *s.Transfers, stats.Known|model.StatsTransfers
+	}
+	if s.TotalTransfers != nil {
+		stats.TotalTransfers, stats.Known = *s.TotalTransfers, stats.Known|model.StatsTotalTransfers
+	}
+	if s.Checks != nil {
+		stats.Checks, stats.Known = *s.Checks, stats.Known|model.StatsChecks
+	}
+	if s.TotalChecks != nil {
+		stats.TotalChecks, stats.Known = *s.TotalChecks, stats.Known|model.StatsTotalChecks
+	}
+	if s.Errors != nil {
+		stats.Errors, stats.Known = *s.Errors, stats.Known|model.StatsErrors
+	}
+	if s.FatalError != nil {
+		stats.FatalError, stats.Known = *s.FatalError, stats.Known|model.StatsFatalError
+	}
+	if s.Deletes != nil {
+		stats.Deletes, stats.Known = *s.Deletes, stats.Known|model.StatsDeletes
+	}
+	if s.Renames != nil {
+		stats.Renames, stats.Known = *s.Renames, stats.Known|model.StatsRenames
+	}
+	if s.Speed != nil {
+		stats.Speed, stats.Known = *s.Speed, stats.Known|model.StatsSpeed
+	}
+	if s.ElapsedTime != nil {
+		stats.Elapsed, stats.Known = time.Duration(*s.ElapsedTime*float64(time.Second)), stats.Known|model.StatsElapsed
 	}
 	if s.ETA != nil {
 		stats.ETA, stats.ETAKnown = time.Duration(*s.ETA*float64(time.Second)), true

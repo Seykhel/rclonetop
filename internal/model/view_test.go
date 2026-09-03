@@ -36,7 +36,7 @@ func TestRCStatsAreMatchedToTheirProcessByAddress(t *testing.T) {
 }
 
 func TestResolvePrefersRCMeasurementsAndKeepsLocalFallbacks(t *testing.T) {
-	local := JobStats{Bytes: 10, TotalBytes: 20, Checks: 3, TotalChecks: 4, Speed: 5}
+	local := JobStats{Bytes: 10, TotalBytes: 20, Checks: 3, TotalChecks: 4, Speed: 5, Known: StatsBytes | StatsTotalBytes | StatsChecks | StatsTotalChecks | StatsSpeed, Source: SourceLog}
 	exact := JobStats{Bytes: 100, TotalBytes: 200, Speed: 50, Known: StatsBytes | StatsTotalBytes | StatsSpeed, Source: SourceRC}
 	s := stateWith(State{
 		Processes: []Process{{PID: 42, RCAddr: "rc:1"}},
