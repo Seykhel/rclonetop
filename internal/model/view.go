@@ -111,9 +111,14 @@ func (s *State) procRows() []ProcRow {
 	rows := make([]ProcRow, 0, len(s.Processes))
 	for _, p := range s.Processes {
 		job := s.jobForPID(p.PID)
+		rc := s.rcStatsForAddr(p.RCAddr)
+		if rc != nil {
+			job.Stats = mergeStats(job.Stats, rc.Stats, job.HaveStats)
+			job.HaveStats = job.HaveStats || rc.Stats.Known != 0
+		}
 		rows = append(rows, ProcRow{
 			Process: p,
-			RCStats: s.rcStatsForAddr(p.RCAddr),
+			RCStats: rc,
 			Job:     job,
 			Errors:  concatLines(s.unitErrorsFor(p), job.Errors),
 		})
@@ -130,6 +135,65 @@ func (s *State) procRows() []ProcRow {
 		return a.ReadRate+a.WriteRate > b.ReadRate+b.WriteRate
 	})
 	return rows
+}
+
+// mergeStats prefers RC measurements one field at a time. An endpoint can
+// implement core/stats partially, and an absent field must leave the local log
+// observation intact rather than turn it into a misleading zero.
+func mergeStats(local, exact JobStats, localKnown bool) JobStats {
+	merged := local
+	if merged.Source == "" {
+		merged.Source = SourceLog
+	}
+	if merged.Sources == nil {
+		merged.Sources = make(map[StatsFields]Source)
+	}
+	if localKnown {
+		for field := StatsBytes; field <= StatsETA; field <<= 1 {
+			if merged.Known&field != 0 {
+				merged.Sources[field] = merged.Source
+			}
+		}
+	}
+	for field := StatsBytes; field <= StatsETA; field <<= 1 {
+		if exact.Known&field == 0 {
+			continue
+		}
+		merged.Known |= field
+		merged.Sources[field] = SourceRC
+		if !localKnown {
+			merged.Source = SourceRC
+		}
+		switch field {
+		case StatsBytes:
+			merged.Bytes = exact.Bytes
+		case StatsTotalBytes:
+			merged.TotalBytes = exact.TotalBytes
+		case StatsTransfers:
+			merged.Transfers = exact.Transfers
+		case StatsTotalTransfers:
+			merged.TotalTransfers = exact.TotalTransfers
+		case StatsChecks:
+			merged.Checks = exact.Checks
+		case StatsTotalChecks:
+			merged.TotalChecks = exact.TotalChecks
+		case StatsErrors:
+			merged.Errors = exact.Errors
+		case StatsFatalError:
+			merged.FatalError = exact.FatalError
+		case StatsDeletes:
+			merged.Deletes = exact.Deletes
+		case StatsRenames:
+			merged.Renames = exact.Renames
+		case StatsSpeed:
+			merged.Speed = exact.Speed
+		case StatsElapsed:
+			merged.Elapsed = exact.Elapsed
+		case StatsETA:
+			merged.ETA, merged.ETAKnown = exact.ETA, exact.ETAKnown
+		}
+	}
+	return merged
 }
 
 func (s *State) rcStatsForAddr(addr string) *RCStats {

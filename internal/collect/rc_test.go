@@ -45,7 +45,7 @@ func TestRCCollectsCoreStatsFromObservedEndpoint(t *testing.T) {
 		t.Fatalf("got %d RC stats, want one", len(snap.RCStats))
 	}
 	got := snap.RCStats[0]
-	want := model.JobStats{Bytes: 1234, TotalBytes: 5678, Transfers: 2, TotalTransfers: 5, Checks: 3, TotalChecks: 4, Errors: 1, FatalError: true, Speed: 12.5, Elapsed: 7250 * time.Millisecond, ETA: 4 * time.Second, ETAKnown: true}
+	want := model.JobStats{Known: model.StatsBytes | model.StatsTotalBytes | model.StatsTransfers | model.StatsTotalTransfers | model.StatsChecks | model.StatsTotalChecks | model.StatsErrors | model.StatsFatalError | model.StatsSpeed | model.StatsElapsed | model.StatsETA, Source: model.SourceRC, Bytes: 1234, TotalBytes: 5678, Transfers: 2, TotalTransfers: 5, Checks: 3, TotalChecks: 4, Errors: 1, FatalError: true, Speed: 12.5, Elapsed: 7250 * time.Millisecond, ETA: 4 * time.Second, ETAKnown: true}
 	if !reflect.DeepEqual(got.Stats, want) {
 		t.Errorf("stats = %+v, want %+v", got.Stats, want)
 	}

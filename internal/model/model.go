@@ -190,6 +190,16 @@ type LogLine struct {
 // through the kernel, which includes retries and metadata and knows nothing of
 // how many files are still to come; only rclone knows what it set out to do.
 type JobStats struct {
+	// Known identifies measurements an RC response actually supplied. A zero
+	// value means the legacy log representation, whose parsed fields retain the
+	// existing best-effort semantics; RC uses the mask to distinguish an absent
+	// field from a measured zero.
+	Known  StatsFields
+	Source Source
+	// Sources records the source of each known field when a measurement is a
+	// field-by-field merge of local and RC observations.
+	Sources map[StatsFields]Source
+
 	Bytes      uint64
 	TotalBytes uint64
 
@@ -218,6 +228,25 @@ type JobStats struct {
 	ETA      time.Duration
 	ETAKnown bool
 }
+
+// StatsFields identifies independently optional groups in rclone statistics.
+type StatsFields uint16
+
+const (
+	StatsBytes StatsFields = 1 << iota
+	StatsTotalBytes
+	StatsTransfers
+	StatsTotalTransfers
+	StatsChecks
+	StatsTotalChecks
+	StatsErrors
+	StatsFatalError
+	StatsDeletes
+	StatsRenames
+	StatsSpeed
+	StatsElapsed
+	StatsETA
+)
 
 // RCStats is rclone's exact accounting for the work handled by one rc daemon.
 // The address is the only identity available without probing the daemon for a
@@ -249,6 +278,9 @@ type RCJob struct {
 // that fraction means anything. A total of zero is a run with nothing to
 // transfer, not a run that is nought per cent complete.
 func (s JobStats) Done() (float64, bool) {
+	if s.Known != 0 && s.Known&(StatsBytes|StatsTotalBytes) != StatsBytes|StatsTotalBytes {
+		return 0, false
+	}
 	if s.TotalBytes == 0 {
 		return 0, false
 	}
