@@ -58,7 +58,7 @@ rclonetop reads from whatever is available instead:
 | local filesystem | `fuse.rclone` mounts, and the disk the caches occupy | done |
 | systemd / journald | unit state, how the last run ended, next timer elapse, errors | done |
 | rclone logs | job progress from `--log-file`, plain or `--use-json-log`, and the real paths of a bisync pair | done |
-| rc API | exact statistics, when a daemon does expose it | planned |
+| rc API | exact statistics and asynchronous job outcomes, when a daemon does expose it | done |
 
 Sources are independent. Whatever is unavailable is hidden rather than shown as
 zero: a zero and an unreadable counter mean very different things to someone
@@ -119,7 +119,7 @@ the whole of it:
 
 ## Status
 
-Early. Six of the seven sources above work; the rc client is not written yet.
+Early. All seven sources above work, subject to what is available on the host.
 The command line and the configuration keys are expected to stay as they are,
 but nothing is promised before 1.0.
 
