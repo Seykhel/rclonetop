@@ -308,7 +308,7 @@ func (m Model) bandwidthBody(v model.View, width, height int) []string {
 	var lines []string
 	for _, row := range v.Procs {
 		p := row.Process
-		lines = append(lines, m.procThroughput(p, width))
+		lines = append(lines, m.procThroughput(p, width, false))
 		if rows < 1 || !p.IOAvailable {
 			// No room, or no counters to draw: the line above already
 			// says which, and a graph of nothing would contradict it.
@@ -369,6 +369,9 @@ func graphRowsFor(height, procs int) int {
 // cannot, and it takes the ramp's hot end so it stays legible against the cold
 // row it now sits on.
 func (m Model) tallGraph(rings map[int]*series.Ring, pid int, d direction, cells, rows int) []string {
+	if !m.graphs.hasTraffic(rings, pid, m.opts.GraphSymbol, cells) {
+		return nil
+	}
 	plot := m.graphs.plot(rings, pid, m.opts.GraphSymbol, cells, rows)
 	if len(plot) == 0 {
 		return nil

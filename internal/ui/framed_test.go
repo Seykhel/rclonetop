@@ -403,10 +403,40 @@ func TestTheBandwidthPanelDrawsATallGraph(t *testing.T) {
 	}
 
 	if graphLines < 4 {
-		t.Errorf("%d rows of graph on screen, want at least four -- one direction each for two processes", graphLines)
+		t.Errorf("%d rows of graph on screen, want at least four -- both directions of the one busy process, several rows each", graphLines)
 	}
 	// And it is a graph across the panel, not a sparkline adrift in it.
 	if widest < 40 {
 		t.Errorf("the widest graph row is %d cells; the panel has 58", widest)
+	}
+}
+
+// busyModel's mount never moves -- its ReadRate and WriteRate are both left at
+// the zero value -- which used to still draw rows of blank braille under it,
+// each pair capped by an arrow with nothing beside it to say what it belonged
+// to. A direction with nothing in its window has nothing to plot, and the
+// figure line above it already says "0 B/s" plainly.
+func TestABandwidthDirectionWithNoTrafficDrawsNoGraph(t *testing.T) {
+	m := busyModel(time.Unix(1787433722, 0))
+	m.width, m.height = 120, 40
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = next.(Model)
+	for i := 0; i < 200; i++ {
+		m.graphs.record(m.state.Processes)
+	}
+
+	// PID 900 is busyModel's mount: IOAvailable but both rates left at zero,
+	// the whole 200 samples recorded above.
+	if got := m.tallGraph(m.graphs.read, 900, downward, 40, 4); got != nil {
+		t.Errorf("an idle direction drew %d rows, want none:\n%s", len(got), strings.Join(got, "\n"))
+	}
+	if got := m.tallGraph(m.graphs.write, 900, upward, 40, 4); got != nil {
+		t.Errorf("an idle direction drew %d rows, want none:\n%s", len(got), strings.Join(got, "\n"))
+	}
+
+	// PID 193345 is the bisync moving real bytes: its graphs must survive
+	// the same change that silenced the mount's.
+	if got := m.tallGraph(m.graphs.write, 193345, upward, 40, 4); len(got) != 4 {
+		t.Errorf("a busy direction drew %d rows, want 4", len(got))
 	}
 }

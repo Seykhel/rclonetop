@@ -69,6 +69,26 @@ func TestIdleProcessDrawsBlank(t *testing.T) {
 	}
 }
 
+// hasTraffic is what lets the framed panel skip a direction's tall graph
+// instead of drawing rows of the same blanks TestIdleProcessDrawsBlank
+// checked above, capped by an arrow that would have nothing beside it.
+func TestHasTrafficFollowsTheWindowNotTheWholeHistory(t *testing.T) {
+	g := newTestStore()
+	feed(g, 1, 11*1024, 0, g.capacity)
+
+	if !g.hasTraffic(g.read, 1, graph.Braille, g.cells) {
+		t.Error("a steady 11 KiB/s read reported no traffic")
+	}
+	if g.hasTraffic(g.write, 1, graph.Braille, g.cells) {
+		t.Error("a write that never moved reported traffic")
+	}
+	// A pid with no ring at all -- never recorded, or already forgotten --
+	// is the same claim as an idle one: nothing to plot.
+	if g.hasTraffic(g.read, 999, graph.Braille, g.cells) {
+		t.Error("an unknown pid reported traffic")
+	}
+}
+
 func TestDirectionsShareOneScale(t *testing.T) {
 	// btop's net_sync: a trickle of uploads alongside a flood of downloads must
 	// stay visibly smaller, not be rescaled up to match.
