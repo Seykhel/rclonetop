@@ -239,6 +239,32 @@ func (g *graphStore) scaleFor(pid int) float64 {
 	return scale
 }
 
+// hasTraffic reports whether one direction moved anything at all across the
+// window a graph of cells width would actually plot.
+//
+// It exists for the framed panel's tall graph, which -- unlike scaleFor -- does
+// not want the two directions pooled: a process saturating its upload while its
+// download sits at exactly zero the whole window has nothing to draw for
+// download, and rows of blank cells under a lone arrow said so badly. The
+// figure line above already prints "0 B/s" plainly; a blank graph under it
+// only looked broken.
+//
+// The distinction from graphRowsFor's "same height whatever it is doing" rule
+// is the one between magnitude and presence: giving a busy process a taller
+// graph than an idle one would rank them, which the panel has no business
+// doing, but this is the same call the panel already makes when a direction
+// has no room at all -- there is nothing here to be fair about.
+func (g *graphStore) hasTraffic(m map[int]*series.Ring, pid int, symbol graph.Symbol, cells int) bool {
+	if cells > g.cells {
+		cells = g.cells
+	}
+	r, ok := m[pid]
+	if !ok || cells < 1 {
+		return false
+	}
+	return r.Max(cells*graph.SamplesPerCell(symbol)) > 0
+}
+
 // spark renders one direction's history as a single row of glyphs, in at most
 // cells columns. It returns nothing when there is not enough room for a graph.
 //

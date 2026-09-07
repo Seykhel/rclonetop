@@ -223,7 +223,7 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 	// the same thing, so this is where they have to appear.
 	return m.procHead(row.Process, width) + "\n" +
 		m.procMeta(row.Process) + "\n" +
-		m.procThroughput(row.Process, width) + "\n" +
+		m.procThroughput(row.Process, width, true) + "\n" +
 		m.jobProgress(row.Job) +
 		m.rcProgress(row.RCStats) +
 		m.filesInFlight(row.Job, width) +
@@ -267,19 +267,31 @@ func (m Model) procMeta(p model.Process) string {
 // one panel's interior in the framed one. The graphs are budgeted from it and
 // dropped when they do not fit, rather than drawn at whatever width the last
 // window size implied.
-func (m Model) procThroughput(p model.Process, width int) string {
+//
+// withSpark controls the one-row inline graph that follows each rate. The
+// dense view needs it: it is the only graph that line will ever get. The
+// framed bandwidth panel does not -- it draws its own multi-row graph, of the
+// same history, right below this line -- and showing both said the same thing
+// twice while making the tall graph's arrow look orphaned whenever the inline
+// one had nothing to draw (an idle process's tail of blank rows with a lone
+// arrow at the bottom, disconnected from any figure).
+func (m Model) procThroughput(p model.Process, width int, withSpark bool) string {
 	if !p.IOAvailable {
 		// Saying so is the point: a zero here would be a lie, not a
 		// measurement.
 		return "  " + m.style("inactive_fg").Render("throughput unavailable (process owned by another user)")
 	}
 
-	cells := sparkCellsFor(width)
+	spark := func(rings map[int]*series.Ring, ramp string) string {
+		if !withSpark {
+			return ""
+		}
+		return m.sparkline(rings, p.PID, ramp, sparkCellsFor(width))
+	}
+
 	return "  " +
-		m.rateCell("↓", p.ReadRate, "download") +
-		m.sparkline(m.graphs.read, p.PID, "download", cells) +
-		"  " + m.rateCell("↑", p.WriteRate, "upload") +
-		m.sparkline(m.graphs.write, p.PID, "upload", cells) +
+		m.rateCell("↓", p.ReadRate, "download") + spark(m.graphs.read, "download") +
+		"  " + m.rateCell("↑", p.WriteRate, "upload") + spark(m.graphs.write, "upload") +
 		m.style("div_line").Render("  ·  ") +
 		m.label().Render("rd ") + m.value().Render(Bytes(p.ReadTotal, m.opts.Base10)) +
 		m.style("div_line").Render(" · ") +
