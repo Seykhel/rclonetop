@@ -123,6 +123,12 @@ type coreStatsResponse struct {
 	Speed          *float64 `json:"speed"`
 	ElapsedTime    *float64 `json:"elapsedTime"`
 	ETA            *float64 `json:"eta"`
+
+	// Transferring is the same per-file detail the log's JSON stats blocks
+	// carry under this key (see jsonStats.Transferring in log.go), which
+	// core/stats answers with too -- both are the same accounting object,
+	// just reached through different doors.
+	Transferring []jsonTransfer `json:"transferring"`
 }
 
 type jobListResponse struct {
@@ -188,6 +194,12 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 		At:     time.Now(),
 		Source: model.SourceRC,
 		Stats:  model.JobStats{Source: model.SourceRC},
+	}
+	if raw.Transferring != nil {
+		// toTransfers always allocates, which would turn an absent key into
+		// a measured empty list; the nil check above is what keeps them
+		// apart.
+		stats.Transferring = toTransfers(raw.Transferring)
 	}
 	if raw.Bytes != nil {
 		stats.Stats.Bytes = *raw.Bytes

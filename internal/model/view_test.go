@@ -69,6 +69,60 @@ func TestResolveUsesRCZeroAsAMeasurement(t *testing.T) {
 	}
 }
 
+// A mount has no log to speak of -- nothing tells rclone to write one -- so
+// RC is the only source that can ever say which files are moving. This is
+// what the mount in quadrant 3 needed once rc.go started decoding
+// "transferring" at all.
+func TestResolveTakesTransferringFromRCWhenTheLogHasNone(t *testing.T) {
+	s := stateWith(State{
+		Processes: []Process{{PID: 42, RCAddr: "rc:1"}},
+		RCStats: []RCStats{{Addr: "rc:1", Transferring: []Transfer{
+			{Name: "uploading.pdf", Percentage: 40},
+		}}},
+	})
+
+	got := s.Resolve().Procs[0].Job.Transferring
+	if len(got) != 1 || got[0].Name != "uploading.pdf" {
+		t.Fatalf("RC's file list did not reach the job: %+v", got)
+	}
+}
+
+// RC overwrites the log's list the same way it overwrites a JobStats field:
+// it is the more exact source, once it has answered.
+func TestResolvePrefersRCTransferringOverTheLogs(t *testing.T) {
+	s := stateWith(State{
+		Processes: []Process{{PID: 42, RCAddr: "rc:1"}},
+		Jobs: []Job{{PID: 42, Transferring: []Transfer{
+			{Name: "stale-from-the-log.pdf"},
+		}}},
+		RCStats: []RCStats{{Addr: "rc:1", Transferring: []Transfer{
+			{Name: "current.pdf"},
+		}}},
+	})
+
+	got := s.Resolve().Procs[0].Job.Transferring
+	if len(got) != 1 || got[0].Name != "current.pdf" {
+		t.Fatalf("log's stale list was kept over RC's: %+v", got)
+	}
+}
+
+// A nil rc.Transferring means core/stats named no such key -- not "asked, and
+// it counted zero" -- so it must leave whatever the log already said alone.
+func TestResolveKeepsLogTransferringWhenRCHasNotAnswered(t *testing.T) {
+	s := stateWith(State{
+		Processes: []Process{{PID: 42, RCAddr: "rc:1"}},
+		Jobs: []Job{{PID: 42, Transferring: []Transfer{
+			{Name: "from-the-log.pdf"},
+		}}},
+		RCStats: []RCStats{{Addr: "rc:1"}},
+	})
+
+	got := s.Resolve().Procs[0].Job.Transferring
+	if len(got) != 1 || got[0].Name != "from-the-log.pdf" {
+		t.Fatalf("a nil RC answer overwrote the log's list: %+v", got)
+	}
+}
+
 func TestRCFailureDoesNotEraseLastValidLocalMeasurement(t *testing.T) {
 	s := NewState()
 	s.Apply(Snapshot{Source: SourceLog, At: time.Unix(1, 0), Jobs: []Job{{

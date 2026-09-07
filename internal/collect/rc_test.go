@@ -54,6 +54,68 @@ func TestRCCollectsCoreStatsFromObservedEndpoint(t *testing.T) {
 	}
 }
 
+// core/stats answers with the same "transferring" shape the log's JSON stats
+// blocks carry, and a process with no on-disk log -- the common case for a
+// long-lived mount, which nothing tells to write one -- has no other way to
+// say which files are in flight.
+func TestRCCollectsTransferringFromCoreStats(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"transferring":[{"name":"b.txt","bytes":200,"size":400,"percentage":50,"speed":9.0},{"name":"a.txt","bytes":100,"size":100,"percentage":100,"speed":5.0,"eta":0}]}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snap.RCStats) != 1 {
+		t.Fatalf("got %d RC stats, want one", len(snap.RCStats))
+	}
+
+	// sortTransfers puts them by name, which is also the point: the object
+	// comes out of a Go map on rclone's side and arrives shuffled.
+	want := []model.Transfer{
+		{Name: "a.txt", Bytes: 100, BytesKnown: true, Size: 100, Percentage: 100, Speed: 5.0, ETA: 0, ETAKnown: true},
+		{Name: "b.txt", Bytes: 200, BytesKnown: true, Size: 400, Percentage: 50, Speed: 9.0},
+	}
+	if got := snap.RCStats[0].Transferring; !reflect.DeepEqual(got, want) {
+		t.Errorf("transferring = %+v, want %+v", got, want)
+	}
+}
+
+// The distinction mirrors Job.Transferring's: nil says core/stats has not
+// named a "transferring" key at all -- an rclone too old to send one, say --
+// and must not be read as "asked, and it counted zero". An empty answer is a
+// measurement and stays non-nil.
+func TestRCTransferringIsNilOnlyWhenTheKeyIsAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"bytes":0}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := snap.RCStats[0].Transferring; got != nil {
+		t.Errorf("transferring = %+v, want nil: the response named no such key", got)
+	}
+}
+
 func TestRCCollectsAsyncJobStatuses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
