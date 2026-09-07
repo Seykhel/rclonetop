@@ -227,7 +227,7 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 		m.jobProgress(row.Job) +
 		m.rcProgress(row.RCStats) +
 		m.filesInFlight(row.Job, width) +
-		m.renderErrors(row.Errors, width)
+		m.renderErrors(row.Errors, row.RecoveredAt, width)
 }
 
 // The three lines a process is described by, separately because the framed view

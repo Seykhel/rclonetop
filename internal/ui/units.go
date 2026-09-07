@@ -44,21 +44,36 @@ func (m Model) denseUnits(rows []model.UnitRow, width int) string {
 // from five hours ago is worth knowing about and worth keeping on screen, but
 // painting it as brightly as one from a minute ago says something untrue about
 // how urgent it is.
-func (m Model) renderErrors(errs []model.LogLine, width int) string {
+//
+// recoveredAt is when the unit is known to have come back up since, and the
+// zero value when there is no such signal -- which is the routine case for a
+// process row, where being on screen at all already answers the question.
+// When it is set and later than the error itself, the line settles straight
+// to the inactive colour and says so: without it, a mount's error from before
+// its last restart reads exactly like one from just now, because Restart=on-
+// failure erases every sign of the failure except the journal line.
+func (m Model) renderErrors(errs []model.LogLine, recoveredAt time.Time, width int) string {
 	if len(errs) == 0 {
 		return ""
 	}
 	e := errs[len(errs)-1]
-	faded := m.fadedAlarm(e.At)
+	resolved := !recoveredAt.IsZero() && recoveredAt.After(e.At)
 
-	prefix := "  " + faded.Render("! ") +
+	style := m.fadedAlarm(e.At)
+	var suffix string
+	if resolved {
+		style = m.style("inactive_fg")
+		suffix = m.style("inactive_fg").Render("  (recovered " + Ago(m.now.Sub(recoveredAt)) + ")")
+	}
+
+	prefix := "  " + style.Render("! ") +
 		m.style("inactive_fg").Render(Ago(m.now.Sub(e.At))+"  ")
-	room := width - lipgloss.Width(prefix)
+	room := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
 	if room <= 0 {
 		return ""
 	}
 
-	out := prefix + faded.Render(Truncate(oneLine(e.Message), room, false)) + "\n"
+	out := prefix + style.Render(Truncate(oneLine(e.Message), room, false)) + suffix + "\n"
 	if n := len(errs); n > 1 {
 		out += "  " + m.style("inactive_fg").Render(
 			fmt.Sprintf("  and %d more recent", n-1)) + "\n"
@@ -128,7 +143,7 @@ func (m Model) denseUnit(row model.UnitRow, width int) string {
 		line += "\n  " + strings.Join(parts, m.style("div_line").Render(" · "))
 	}
 	line += "\n"
-	line += m.renderErrors(row.Errors, width)
+	line += m.renderErrors(row.Errors, u.RecoveredAt(), width)
 
 	return line
 }

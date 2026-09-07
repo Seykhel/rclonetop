@@ -59,6 +59,12 @@ type ProcRow struct {
 	// started with --log-file writes nothing to the journal, and one without it
 	// has no log file to read.
 	Errors []LogLine
+
+	// RecoveredAt is the owning unit's Unit.RecoveredAt, carried over here
+	// because the unit itself gets no line of its own once its process is on
+	// screen -- see unitRows. The zero value means what it means there: no
+	// evidence yet that whatever Errors reports has been left behind.
+	RecoveredAt time.Time
 }
 
 // UnitRow is a service together with the timer that starts it and the log it
@@ -124,11 +130,13 @@ func (s *State) procRows() []ProcRow {
 				job.Transferring = rc.Transferring
 			}
 		}
+		owner, _ := s.unitFor(p)
 		rows = append(rows, ProcRow{
-			Process: p,
-			RCStats: rc,
-			Job:     job,
-			Errors:  concatLines(s.unitErrorsFor(p), job.Errors),
+			Process:     p,
+			RCStats:     rc,
+			Job:         job,
+			Errors:      concatLines(owner.Errors, job.Errors),
+			RecoveredAt: owner.RecoveredAt(),
 		})
 	}
 
@@ -347,18 +355,17 @@ func (s *State) jobForLogFile(path string) Job {
 	return Job{}
 }
 
-// unitErrorsFor returns the journal errors of the unit that owns a process, so
-// they can be shown against the process rather than lost with its unit line.
-func (s *State) unitErrorsFor(p Process) []LogLine {
+// unitFor returns the unit that owns a process, if any is recorded.
+func (s *State) unitFor(p Process) (Unit, bool) {
 	if p.Unit == "" {
-		return nil
+		return Unit{}, false
 	}
 	for _, u := range s.Units {
 		if u.Name == p.Unit {
-			return u.Errors
+			return u, true
 		}
 	}
-	return nil
+	return Unit{}, false
 }
 
 // concatLines joins two sets of log lines into a slice of its own, so a row

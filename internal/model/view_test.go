@@ -204,6 +204,24 @@ func TestAUnitShownAsAProcessMovesItsErrorsThere(t *testing.T) {
 	}
 }
 
+// TestAUnitShownAsAProcessCarriesItsRecoveredAtToo is the companion of
+// TestAUnitShownAsAProcessMovesItsErrorsThere: RecoveredAt is what lets the
+// renderer say a moved error is already old news, and it is only findable by
+// the same join -- a ProcRow has no unit of its own to ask.
+func TestAUnitShownAsAProcessCarriesItsRecoveredAtToo(t *testing.T) {
+	recovered := time.Unix(1787433722, 0)
+	s := stateWith(State{
+		Processes: []Process{{PID: 42, Unit: "rclone-mount.service"}},
+		Units: []Unit{
+			{Name: "rclone-mount.service", ActiveState: "active", ActiveEnter: recovered},
+		},
+	})
+
+	if got := s.Resolve().Procs[0].RecoveredAt; !got.Equal(recovered) {
+		t.Errorf("got RecoveredAt %v, want %v", got, recovered)
+	}
+}
+
 // The journal's errors and the log's are concatenated in that order, and into a
 // slice of the row's own: the collectors go on appending to theirs between
 // ticks, and a row handed out earlier must not change underneath the screen.

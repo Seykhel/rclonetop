@@ -544,6 +544,24 @@ func (u Unit) Failed() bool {
 	return u.ActiveState == "failed" || (u.Result != "" && u.Result != "success")
 }
 
+// RecoveredAt is when the unit is known to have come back up, for weighing
+// against an error's own timestamp -- and the zero value when there is no
+// such evidence, which is the case while it is still failed.
+//
+// A unit still failed answers here with nothing: the error is current news by
+// definition. Otherwise ActiveEnter is when it last became fully active --
+// Restart=on-failure takes a mount through activating on its own, with
+// nothing else left to mark the moment it was healthy again. A oneshot never
+// sets ActiveEnter, but it does not need to: its errors are dropped outright
+// once a later run succeeds (see the systemd collector's forgetResolved),
+// which answers the same question a different way.
+func (u Unit) RecoveredAt() time.Time {
+	if u.Failed() {
+		return time.Time{}
+	}
+	return u.ActiveEnter
+}
+
 // Snapshot is one observation of rclone activity by a single collector. A
 // collector only fills the fields it knows about; the rest stay nil and are
 // filled in by other collectors covering the same moment.
