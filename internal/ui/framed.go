@@ -416,7 +416,7 @@ func (m Model) statusBody(v model.View, width int) []string {
 	lines = append(lines, bodyLines(m.denseUnits(v.Units, width))...)
 	lines = append(lines, bodyLines(m.denseCaches(v.Caches))...)
 	for _, row := range v.Procs {
-		lines = append(lines, bodyLines(m.renderErrors(row.Errors, width))...)
+		lines = append(lines, bodyLines(m.renderErrors(row.Errors, row.RecoveredAt, width))...)
 	}
 	if len(lines) == 0 {
 		return []string{m.style("inactive_fg").Render("nothing to report")}

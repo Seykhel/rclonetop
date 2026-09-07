@@ -266,6 +266,57 @@ func TestJournalErrorIsFlattenedAndTrimmed(t *testing.T) {
 	}
 }
 
+// TestRecoveredMountErrorIsCalledOut covers a mount that Restart=on-failure
+// has already brought back up. A mount never "succeeds", so nothing forgets
+// its old journal errors the way a finished oneshot's are forgotten -- the
+// line has to say on its own that this is not the news it looks like.
+func TestRecoveredMountErrorIsCalledOut(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWith([]model.Unit{{
+		Name: "rclone-icloud.service", Scope: "user",
+		ActiveState: "active", SubState: "running", Result: "success",
+		ActiveEnter: now.Add(-5 * time.Minute),
+		Errors: []model.LogLine{{
+			At: now.Add(-30 * time.Minute), Priority: 3,
+			Message: "Failed with result 'exit-code'.",
+		}},
+	}}, now)
+
+	got := plain(m, 80)
+	if !strings.Contains(got, "recovered 5m0s ago") {
+		t.Errorf("a resolved failure did not say when it recovered:\n%s", got)
+	}
+}
+
+// TestOngoingMountFailureIsNotCalledRecovered is the other side of
+// TestRecoveredMountErrorIsCalledOut: a mount that is still down, or one that
+// has been running the whole time an error was logged, must not claim a
+// recovery it has no evidence for.
+func TestOngoingMountFailureIsNotCalledRecovered(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	cases := map[string]model.Unit{
+		"still failed": {
+			Name: "rclone-icloud.service", Scope: "user",
+			ActiveState: "failed", Result: "exit-code",
+			Errors: []model.LogLine{{At: now.Add(-2 * time.Minute), Priority: 3, Message: "boom"}},
+		},
+		"running since before the error": {
+			Name: "rclone-icloud.service", Scope: "user",
+			ActiveState: "active", SubState: "running", Result: "success",
+			ActiveEnter: now.Add(-14 * time.Hour),
+			Errors:      []model.LogLine{{At: now.Add(-time.Minute), Priority: 3, Message: "boom"}},
+		},
+	}
+	for name, u := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := plain(modelWith([]model.Unit{u}, now), 80)
+			if strings.Contains(got, "recovered") {
+				t.Errorf("claimed a recovery with no evidence of one:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestNoUnitsRendersNothing(t *testing.T) {
 	m := modelWith(nil, time.Unix(1787433722, 0))
 	if rows := m.state.Resolve().Units; len(rows) != 0 {
