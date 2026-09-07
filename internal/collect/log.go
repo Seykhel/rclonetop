@@ -620,8 +620,16 @@ func (s jsonStats) model() model.JobStats {
 // file" is a measurement. Only a job no block has been read for at all has
 // nothing to say.
 func (s jsonStats) transfers() []model.Transfer {
-	out := make([]model.Transfer, 0, len(s.Transferring))
-	for _, t := range s.Transferring {
+	return toTransfers(s.Transferring)
+}
+
+// toTransfers is jsonStats.transfers' conversion, shared with the rc
+// collector: rclone's /core/stats answers with the identical "transferring"
+// shape the log's own JSON stats blocks carry, both being the same accounting
+// object serialised from two different places.
+func toTransfers(ts []jsonTransfer) []model.Transfer {
+	out := make([]model.Transfer, 0, len(ts))
+	for _, t := range ts {
 		m := model.Transfer{
 			Name:       t.Name,
 			Percentage: t.Percentage,

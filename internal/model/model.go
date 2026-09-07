@@ -257,6 +257,11 @@ type RCStats struct {
 	Jobs   []RCJob
 	At     time.Time
 	Source Source
+
+	// Transferring are the files core/stats reported in flight, on the same
+	// terms as Job.Transferring: nil when the daemon has not been asked yet,
+	// non-nil and possibly empty once it has answered.
+	Transferring []Transfer
 }
 
 // RCJob is the lifecycle record rclone exposes for an asynchronous rc job.

@@ -115,6 +115,14 @@ func (s *State) procRows() []ProcRow {
 		if rc != nil {
 			job.Stats = mergeStats(job.Stats, rc.Stats, job.HaveStats)
 			job.HaveStats = job.HaveStats || rc.Stats.Known != 0
+			// Same "RC wins when it has an answer" rule as mergeStats, kept
+			// separate because Transferring is not one of JobStats' fields:
+			// a nil rc.Transferring means core/stats has not been polled at
+			// all, not that it counted zero files, and must not overwrite a
+			// log observation that already has.
+			if rc.Transferring != nil {
+				job.Transferring = rc.Transferring
+			}
 		}
 		rows = append(rows, ProcRow{
 			Process: p,
