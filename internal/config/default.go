@@ -31,7 +31,7 @@ const defaultFile = `#? Configuration file for rclonetop v{{version}}
 #? A flag given on the command line overrides the value here.
 
 #* Name of a btop++/bpytop/bashtop formatted ".theme" file, without the
-#* extension. "default" and "tty" are built in and need no file. Themes are
+#* extension. "default", "tty" and "vivid" are built in and need no file. Themes are
 #* looked for in rclonetop's own theme directories and then in btop's, so any
 #* theme already installed for btop can be named here as is.
 color_theme = "default"

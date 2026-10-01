@@ -5,6 +5,7 @@ import "sync"
 const (
 	defaultName = "default"
 	ttyName     = "tty"
+	vividName   = "vivid"
 )
 
 var (
@@ -13,6 +14,9 @@ var (
 
 	ttyOnce sync.Once
 	ttyTh   *Theme
+
+	vividOnce sync.Once
+	vividTh   *Theme
 )
 
 // defaultColors is btop's built-in Default theme, reproduced verbatim from
@@ -108,6 +112,50 @@ var ttyColors = map[string]string{
 	"process_start": "#00ff00", "process_mid": "#ffff00", "process_end": "#ff0000",
 }
 
+// vividColors is rclonetop's own palette, for a desktop whose terminal theme is
+// saturated rather than btop's muted greys: a blue-black background, a cool
+// off-white foreground, and each panel outlined in a hue of its own -- pink for
+// transfers, blue for bandwidth, green for files, amber for status -- so a
+// panel is found by colour before its name is read.
+//
+// The values are chosen here, not lifted from any other program's palette. The
+// ramps keep btop's meaning (cpu and process are green to amber to red, download
+// and upload are their own two hues) but start well clear of the background,
+// because the point of the theme is that nothing on it is murky; the legibility
+// tests in internal/ui hold it to the same floors as the default theme.
+//
+// meter_bg is the background moved about a sixth of the way towards the
+// foreground: dark enough that the track reads as empty, light enough that it
+// reads at all, which is what a row of square cells needs to be counted.
+var vividColors = map[string]string{
+	"main_bg":     "#12131c",
+	"main_fg":     "#c8cde0",
+	"title":       "#eef0ff",
+	"hi_fg":       "#ff5f87",
+	"selected_bg": "#2b2d45",
+	"selected_fg": "#eef0ff",
+	"inactive_fg": "#4c5068",
+	"graph_text":  "#6c7190",
+	"meter_bg":    "#2c2f42",
+	"proc_misc":   "#7bd88f",
+	"div_line":    "#2c2f42",
+
+	"proc_box": "#ff7edb",
+	"net_box":  "#7aa2ff",
+	"mem_box":  "#9ece6a",
+	"cpu_box":  "#e0af68",
+
+	"temp_start": "#7aa2ff", "temp_mid": "#bb9af7", "temp_end": "#ff5f87",
+	"cpu_start": "#9ece6a", "cpu_mid": "#e0af68", "cpu_end": "#f7768e",
+	"free_start": "#5a8a4a", "free_mid": "#9ece6a", "free_end": "#c3f08c",
+	"cached_start": "#2f7f9a", "cached_mid": "#7dcfff", "cached_end": "#b4f0ff",
+	"available_start": "#8a6a2a", "available_mid": "#e0af68", "available_end": "#ffd28a",
+	"used_start": "#8a3a4a", "used_mid": "#f7768e", "used_end": "#ff9eb0",
+	"download_start": "#3d59a1", "download_mid": "#7aa2ff", "download_end": "#b4c8ff",
+	"upload_start": "#8a3f8a", "upload_mid": "#ff7edb", "upload_end": "#ffb4ec",
+	"process_start": "#9ece6a", "process_mid": "#e0af68", "process_end": "#f7768e",
+}
+
 // Default returns btop's Default theme.
 func Default() *Theme {
 	defaultOnce.Do(func() { defaultTh = fromMap(defaultName, defaultColors) })
@@ -118,6 +166,12 @@ func Default() *Theme {
 func TTY() *Theme {
 	ttyOnce.Do(func() { ttyTh = fromMap(ttyName, ttyColors) })
 	return ttyTh
+}
+
+// Vivid returns rclonetop's saturated theme.
+func Vivid() *Theme {
+	vividOnce.Do(func() { vividTh = fromMap(vividName, vividColors) })
+	return vividTh
 }
 
 // fromMap builds a theme from literal colour values, sharing the gradient

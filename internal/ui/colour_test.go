@@ -8,7 +8,15 @@ import (
 )
 
 func themes() map[string]*theme.Theme {
-	return map[string]*theme.Theme{"default": theme.Default(), "tty": theme.TTY()}
+	return map[string]*theme.Theme{"default": theme.Default(), "tty": theme.TTY(), "vivid": theme.Vivid()}
+}
+
+// legibleThemes are the built-ins the luminance floors are held against: every
+// one of them except tty, whose eight saturated primaries Rec. 709 misjudges
+// (see luminance). A built-in added without being listed here escapes the floors,
+// which is the same hole textAccents closes for accents.
+func legibleThemes() map[string]*theme.Theme {
+	return map[string]*theme.Theme{"default": theme.Default(), "vivid": theme.Vivid()}
 }
 
 func TestTextIsNeverPaintedInARampsDarkEnd(t *testing.T) {
@@ -112,15 +120,16 @@ func TestFixedAccentsAreLegible(t *testing.T) {
 	// primaries, and Rec. 709 scores #ff0000 at 54 while a console renders it at
 	// full intensity and perfectly readable: luminance is a poor proxy for a pure
 	// hue, and there is no blend towards the foreground to rescue one here.
-	th := theme.Default()
-	m := New(nil, Options{Theme: th}, nil)
-	floor := luminance(th.Color("main_fg")) / 2
+	for name, th := range legibleThemes() {
+		m := New(nil, Options{Theme: th}, nil)
+		floor := luminance(th.Color("main_fg")) / 2
 
-	for _, a := range textAccents {
-		if got := luminance(m.accentColor(a)); got < floor {
-			t.Errorf("the %s ramp at %.2f has luminance %.0f, below the floor of %.0f: "+
-				"pick a brighter point on it, or blend it instead",
-				a.ramp, a.at, got, floor)
+		for _, a := range textAccents {
+			if got := luminance(m.accentColor(a)); got < floor {
+				t.Errorf("%s: the %s ramp at %.2f has luminance %.0f, below the floor of %.0f: "+
+					"pick a brighter point on it, or blend it instead",
+					name, a.ramp, a.at, got, floor)
+			}
 		}
 	}
 }
@@ -131,21 +140,23 @@ func TestALabelIsDimmerThanItsValueAndBrighterThanInert(t *testing.T) {
 	// most of the screen invisible and left nothing to say "switched off" with.
 	// Made main_fg instead, they became indistinguishable from the figures they
 	// name. Halfway is legible and plainly secondary, which is all a label is.
-	th := theme.Default()
-	m := New(nil, Options{Theme: th}, nil)
+	for name, th := range legibleThemes() {
+		m := New(nil, Options{Theme: th}, nil)
 
-	inert := luminance(th.Color("inactive_fg"))
-	label := luminance(m.labelColor())
-	value := luminance(th.Color("main_fg"))
+		inert := luminance(th.Color("inactive_fg"))
+		label := luminance(m.labelColor())
+		value := luminance(th.Color("main_fg"))
 
-	if !(inert < label && label < value) {
-		t.Errorf("luminance should climb inert < label < value, got %.0f, %.0f, %.0f",
-			inert, label, value)
+		if !(inert < label && label < value) {
+			t.Errorf("%s: luminance should climb inert < label < value, got %.0f, %.0f, %.0f",
+				name, inert, label, value)
+		}
+		if label < value/2 {
+			t.Errorf("%s: a label at %.0f is below half the body text at %.0f, which is where the last one was unreadable",
+				name, label, value)
+		}
 	}
-	if label < value/2 {
-		t.Errorf("a label at %.0f is below half the body text at %.0f, which is where the last one was unreadable",
-			label, value)
-	}
+	m := New(nil, Options{Theme: theme.Default()}, nil)
 	// Bold rides with colour and only with colour: emphasising every figure
 	// emphasises none of them, which is what the first attempt did.
 	if m.value().GetBold() {
@@ -185,15 +196,16 @@ func TestEveryFilledCellClearsTheTrack(t *testing.T) {
 	// The tty palette is exempt for the reason the accent test exempts it:
 	// eight saturated colours whose Rec. 709 luminance lies about them. That
 	// mode tells the two halves apart by shape instead.
-	th := theme.Default()
-	m := New(nil, Options{Theme: th}, nil)
-	want := luminance(th.Color("meter_bg")) + meterFloor
+	for name, th := range legibleThemes() {
+		m := New(nil, Options{Theme: th}, nil)
+		want := luminance(th.Color("meter_bg")) + meterFloor
 
-	for _, ramp := range theme.GradientNames {
-		for _, at := range []float64{0, 0.05, 0.2, 0.5, 0.8, 1} {
-			if got := luminance(m.meterColor(ramp, at)); got < want {
-				t.Errorf("%s at %.2f has luminance %.0f, below the track's floor of %.0f",
-					ramp, at, got, want)
+		for _, ramp := range theme.GradientNames {
+			for _, at := range []float64{0, 0.05, 0.2, 0.5, 0.8, 1} {
+				if got := luminance(m.meterColor(ramp, at)); got < want {
+					t.Errorf("%s: %s at %.2f has luminance %.0f, below the track's floor of %.0f",
+						name, ramp, at, got, want)
+				}
 			}
 		}
 	}

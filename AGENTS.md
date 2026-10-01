@@ -155,6 +155,10 @@ a finger that just found it as other panels come and go. The digit itself is `hi
 looked up the same way `title` is -- not one of `textAccents`' ramp-indexed accents, since there is no
 ramp here to index -- and plain rather than bold: `alarm()` reaches for `hi_fg` too, but bold with it,
 for something wrong right now, and a permanent hotkey carries neither that weight nor that news.
+It is spelled the way btop spells it, `╭─┐¹transfers┌──`: superscript, flush against the name, between
+the two corners that face each other. Both are properties of `box.Runes`, not of the call site,
+because the console font that cannot draw `╭` cannot be trusted with `¹` either — `box.ASCII` writes
+`+-[1 transfers]--`.
 
 `layout.go` answers *where*, and answers it in arithmetic over two integers: no theme, no lipgloss,
 no state, so the awkward sizes are asserted on placements rather than on escape sequences. It
@@ -267,7 +271,7 @@ half of `main_fg`'s luminance, and `TestEveryFilledCellClearsTheTrack` holds the
 its disease with everything else still green, and `TestTheLiftLeavesALegibleRampAlone` is why the
 meter's cure cannot spread to cells that never needed it. Luminance is Rec. 709 and is a poor proxy
 for a saturated primary — it scores `#ff0000` at 54 — which is why these run against the built-in
-theme only and the `tty` one is exempt. That exemption is also why `--tty` tells a meter's two halves
+themes only (`legibleThemes` in `colour_test.go`: `default` and `vivid`) and the `tty` one is exempt. That exemption is also why `--tty` tells a meter's two halves
 apart by *shape*: eight saturated colours cannot be relied on to do it by brightness.
 
 **Three levels of emphasis, and each boundary was a mistake on one side of it.** `Model.label()` is
@@ -296,7 +300,9 @@ finished string is how a geometry bug becomes a colour bug — it copies the six
 since depending on the styling library would put it back inside the thing it is kept outside of),
 `internal/series` (fixed-capacity `Ring`, sized from the terminal width, drops non-finite samples),
 `internal/theme` (btop `.theme` parsing, 101-step gradients matching btop's banding, plus the
-`default` and `tty` built-ins in `builtin.go`).
+`default`, `tty` and `vivid` built-ins in `builtin.go`). `vivid` is rclonetop's own palette, not a copy
+of anyone's; every built-in other than `default` falls back to it key by key, so
+`TestVividThemeSetsEveryKeyTheDefaultDoes` is what stops it quietly looking half like btop's.
 
 `internal/execstart` is the other one: everything involved in reading what a unit actually runs,
 behind two functions plus a helper — `DrivesRclone(execStart)`, `LogFile(execStart, home)` and

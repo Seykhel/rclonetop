@@ -172,8 +172,12 @@ func meterPoint(i, width int) float64 {
 
 // meterGlyphs are the two cells a bar is built from.
 //
-// Away from a plain console both are the same solid block and only the colour
-// differs, which is btop's look: one continuous bar with a dark track behind it.
+// Away from a plain console both are the same small square and only the colour
+// differs, which is btop's look: a row of separate cells with a hairline of
+// background between them, filled and track alike. A solid block ran the cells
+// together into one slab, which reads as a colour change rather than as a
+// quantity; separate cells let the eye count.
+//
 // Under --tty they have to differ in shape as well, because a console font may
 // not have U+2588 and, more to the point, the tty palette cannot be relied on to
 // separate a filled cell from the track -- a bar that is always full says
@@ -182,7 +186,7 @@ func meterGlyphs(sym graph.Symbol) (lit, track rune) {
 	if sym == graph.TTY {
 		return '#', '-'
 	}
-	return '█', '█'
+	return '■', '■'
 }
 
 // boxRunes answers for a frame the question meterGlyphs answers for a bar, and
