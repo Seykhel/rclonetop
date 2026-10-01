@@ -262,7 +262,7 @@ func SearchDirs() []string {
 // List returns the names of every theme found on disk, plus the built-in ones,
 // deduplicated and sorted.
 func List() []string {
-	seen := map[string]bool{defaultName: true, ttyName: true}
+	seen := map[string]bool{defaultName: true, ttyName: true, vividName: true}
 	for _, dir := range SearchDirs() {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -283,14 +283,16 @@ func List() []string {
 	return names
 }
 
-// Load finds and parses a theme by name. The two built-in names are handled
-// without touching the filesystem.
+// Load finds and parses a theme by name. The built-in names are handled without
+// touching the filesystem.
 func Load(name string) (*Theme, error) {
 	switch name {
 	case "", defaultName, "Default":
 		return Default(), nil
 	case ttyName, "TTY":
 		return TTY(), nil
+	case vividName:
+		return Vivid(), nil
 	}
 
 	for _, dir := range SearchDirs() {

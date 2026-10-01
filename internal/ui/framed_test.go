@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -59,13 +58,25 @@ func busyModel(now time.Time) Model {
 	return m
 }
 
-// panelTopLabel is the top edge a panel draws, up to its title: the border,
-// its hotkey digit and the name -- "files" also appears in "1158/4667 files"
-// and in the cache line, so a bare title would find a panel that was never
-// drawn.
+// panelTopLabel is the top edge a panel draws, up to and including the bracket
+// that closes its title: the border, its hotkey digit and the name -- "files"
+// also appears in "1158/4667 files" and in the cache line, so a bare title would
+// find a panel that was never drawn.
+//
+// It is taken from box itself rather than spelled out here, so that this test
+// asks "is the panel on screen" and leaves "how is a title spelled" to the box
+// package's own suite.
 func panelTopLabel(k panelKind) string {
-	return fmt.Sprintf("%c%c %d %s ",
-		box.Rounded.TopLeft, box.Rounded.Horizontal, panels[k].hotkey, panels[k].title)
+	wide := box.Box{Width: 80, Height: 3, Runes: box.Rounded}
+	var b strings.Builder
+	for _, seg := range wide.Top(panels[k].title, panels[k].hotkey) {
+		if seg.Kind == box.KindBorder && strings.HasPrefix(seg.Text, string(box.Rounded.TitleRight)) {
+			b.WriteRune(box.Rounded.TitleRight)
+			break
+		}
+		b.WriteString(seg.Text)
+	}
+	return b.String()
 }
 
 // The property the dense view already had and paid for once (2707cc4): whatever

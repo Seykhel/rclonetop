@@ -297,9 +297,14 @@ that scale so they stay comparable.
 btop's colour vocabulary maps onto rclone closely enough to reuse as is:
 `download` and `upload` keep their meaning, the memory ramps (`used`, `free`,
 `cached`, `available`) describe remote and cache usage, the `cpu` ramp grades
-transfer throughput, and `process` colours the files in flight. Two built-in
-themes need no files: `default`, which reproduces btop's, and `tty` for
-eight-colour consoles.
+transfer throughput, and `process` colours the files in flight. Three built-in
+themes need no files: `default`, which reproduces btop's, `tty` for
+eight-colour consoles, and `vivid`, rclonetop's own saturated palette — a
+blue-black background with each panel outlined in a hue of its own:
+
+```sh
+rclonetop --theme vivid
+```
 
 The ramps are used the way btop uses them, which is not quite the way it looks.
 btop's ramps start dark on purpose — `download_start` is `#291f75` — because it

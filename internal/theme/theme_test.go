@@ -103,3 +103,18 @@ func TestDefaultThemeIsComplete(t *testing.T) {
 		}
 	}
 }
+
+// Every other theme falls back to the default for a key it does not set, so an
+// incomplete built-in would not look broken -- it would quietly look half like
+// btop's, which is the opposite of why it exists. It is checked against its own
+// table rather than through Color, which is the call that would hide the gap.
+func TestVividThemeSetsEveryKeyTheDefaultDoes(t *testing.T) {
+	for key := range defaultColors {
+		if _, ok := vividColors[key]; !ok {
+			t.Errorf("vivid does not set %q, so it would borrow the default's", key)
+		}
+	}
+	if th, err := Load("vivid"); err != nil || th != Vivid() {
+		t.Errorf(`Load("vivid") = %v, %v; want the built-in`, th, err)
+	}
+}

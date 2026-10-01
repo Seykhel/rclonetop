@@ -36,7 +36,7 @@ func TestAFrameWithNoTitle(t *testing.T) {
 func TestTheTitleSitsInsideTheTopEdge(t *testing.T) {
 	b := Box{Width: 20, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top("files", 0)), "╭─ files ──────────╮"; got != want {
+	if got, want := join(b.Top("files", 0)), "╭─┐files┌──────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 	if cells(join(b.Top("files", 0))) != b.Width {
@@ -45,10 +45,16 @@ func TestTheTitleSitsInsideTheTopEdge(t *testing.T) {
 }
 
 // btop numbers its boxes, and the digit is coloured differently from the name.
+// It is written in superscript, flush against the name, as btop writes it.
 func TestTheHotkeyPrecedesTheTitle(t *testing.T) {
 	b := Box{Width: 20, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top("files", 2)), "╭─ 2 files ────────╮"; got != want {
+	if got, want := join(b.Top("files", 2)), "╭─┐²files┌─────────╮"; got != want {
+		t.Errorf("top = %q, want %q", got, want)
+	}
+	// Every digit has its superscript, so a key past nine is still one cell
+	// a digit -- which is what TestEveryEdgeIsExactlyTheBoxWidth relies on.
+	if got, want := join(b.Top("files", 10)), "╭─┐¹⁰files┌────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 }
@@ -63,7 +69,7 @@ func TestTheSegmentsAreHandedOverSeparately(t *testing.T) {
 	for _, s := range b.Top("bandwidth", 3) {
 		got = append(got, kindName(s.Kind)+":"+s.Text)
 	}
-	want := []string{"border:╭─ ", "hotkey:3", "border: ", "title:bandwidth", "border: ────────╮"}
+	want := []string{"border:╭─┐", "hotkey:³", "title:bandwidth", "border:┌─────────╮"}
 
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("segments =\n  %v\nwant\n  %v", got, want)
@@ -75,7 +81,7 @@ func TestTheSegmentsAreHandedOverSeparately(t *testing.T) {
 func TestTheASCIIFallbackKeepsTheShape(t *testing.T) {
 	b := Box{Width: 20, Height: 3, Runes: ASCII}
 
-	if got, want := join(b.Top("files", 1)), "+- 1 files --------+"; got != want {
+	if got, want := join(b.Top("files", 1)), "+-[1 files]--------+"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 	if got, want := b.Bottom(), "+------------------+"; got != want {
@@ -99,10 +105,10 @@ func TestATitleThatDoesNotFitIsDroppedNotCut(t *testing.T) {
 	}
 	// Three columns wider and it fits, with the single trailing rune that keeps
 	// the name off the corner. "bandwidth" is nine, and the frame charges six
-	// more for the corners, the leading rune, the two spaces and that trailing
-	// one.
+	// more for the corners, the leading rune, the two brackets and that
+	// trailing one.
 	wider := Box{Width: 15, Height: 3, Runes: Rounded}
-	if got, want := join(wider.Top("bandwidth", 0)), "╭─ bandwidth ─╮"; got != want {
+	if got, want := join(wider.Top("bandwidth", 0)), "╭─┐bandwidth┌─╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 }
@@ -110,9 +116,9 @@ func TestATitleThatDoesNotFitIsDroppedNotCut(t *testing.T) {
 // The hotkey goes with the title. Half a label -- a bare digit naming nothing --
 // is worse than no label at all.
 func TestTheHotkeyGoesWithTheTitleItNames(t *testing.T) {
-	b := Box{Width: 14, Height: 3, Runes: Rounded}
+	b := Box{Width: 15, Height: 3, Runes: Rounded}
 
-	if got, want := join(b.Top("bandwidth", 4)), "╭────────────╮"; got != want {
+	if got, want := join(b.Top("bandwidth", 4)), "╭─────────────╮"; got != want {
 		t.Errorf("top = %q, want %q", got, want)
 	}
 }
@@ -158,7 +164,7 @@ func TestEveryEdgeIsExactlyTheBoxWidth(t *testing.T) {
 	titles := []string{"", "a", "files", "bandwidth", "a title far longer than any box"}
 	for width := 2; width <= 120; width++ {
 		for _, title := range titles {
-			for _, key := range []int{NoHotkey, 1, 9} {
+			for _, key := range []int{NoHotkey, 1, 9, 10} {
 				for _, runes := range []Runes{Rounded, ASCII} {
 					b := Box{Width: width, Height: 3, Runes: runes}
 					if got := cells(join(b.Top(title, key))); got != width {
