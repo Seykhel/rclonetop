@@ -116,6 +116,94 @@ func TestRCTransferringIsNilOnlyWhenTheKeyIsAbsent(t *testing.T) {
 	}
 }
 
+func TestRCMeasuredEmptyTransferringIsNotNil(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"transferring":[]}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := snap.RCStats[0].Transferring
+	if got == nil || len(got) != 0 {
+		t.Errorf("transferring = %+v, want a measured empty list", got)
+	}
+}
+
+// A transfer record can arrive with fields missing -- an older daemon, or a
+// response the endpoint populated only in part. An absent byte count or size
+// must stay unknown: zero would claim the file is empty and fully moved, which
+// is the opposite of what a daemon that did not report them is saying. A
+// negative eta is rclone declining to estimate, the same as a missing one.
+func TestRCPreservesUnknownTransferringFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"transferring":[{"name":"partial.bin","percentage":40,"speed":9.0},{"name":"stalled.bin","percentage":10,"size":100,"eta":-1}]}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snap.RCStats) != 1 {
+		t.Fatalf("got %d RC stats, want one", len(snap.RCStats))
+	}
+
+	got := snap.RCStats[0].Transferring
+	want := []model.Transfer{
+		{Name: "partial.bin", Percentage: 40, Speed: 9.0, Size: model.UnknownSize},
+		{Name: "stalled.bin", Percentage: 10, Size: 100},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("transferring = %+v, want %+v", got, want)
+	}
+	if got[0].BytesKnown {
+		t.Errorf("absent bytes were reported as a measured zero: %+v", got[0])
+	}
+	if got[0].ETAKnown || got[1].ETAKnown {
+		t.Errorf("absent or negative eta was reported as an estimate: %+v", got)
+	}
+}
+
+// A transferring entry whose fields are the wrong type is malformed input, and
+// malformed input fails the whole core/stats read rather than being silently
+// coerced: the daemon is not speaking the protocol this parser expects, and a
+// half-understood sample is worse than none.
+func TestRCRejectsMalformedTransferringEntry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"transferring":[{"name":"x","size":"big"}]}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err == nil || len(snap.RCStats) != 0 {
+		t.Fatalf("malformed transferring was not rejected: snap=%+v err=%v", snap, err)
+	}
+}
+
 func TestRCCollectsAsyncJobStatuses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

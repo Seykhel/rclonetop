@@ -292,6 +292,11 @@ func (s JobStats) Done() (float64, bool) {
 	return float64(s.Bytes) / float64(s.TotalBytes), true
 }
 
+// UnknownSize is the Size a Transfer carries when rclone has not said how big
+// the file is. Zero is a real answer -- an empty file -- so it cannot stand in
+// for the missing one.
+const UnknownSize int64 = -1
+
 // Transfer is one file rclone has in flight: what it is, how far through it is,
 // and how fast it is going.
 //
@@ -320,9 +325,10 @@ type Transfer struct {
 	Bytes      uint64
 	BytesKnown bool
 
-	// Size is the file's total size, or -1 when rclone does not know it -- what
-	// it records for a source that cannot be sized before the transfer starts.
-	// Zero is a real answer, an empty file, so it cannot stand for this one.
+	// Size is the file's total size, or UnknownSize when rclone does not know
+	// it -- what it records for a source that cannot be sized before the
+	// transfer starts. Zero is a real answer, an empty file, so it cannot stand
+	// for this one.
 	Size int64
 
 	// Speed is this file's own rate in bytes per second, which is a different
