@@ -158,10 +158,14 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			if r.Daemon.Version != "" {
 				fmt.Fprintf(w, "      version %s\n", r.Daemon.Version)
 			}
-			if r.Daemon.VFS.Known {
+			if r.Daemon.VFS.Answered {
 				if r.Daemon.VFS.DiskCache {
-					fmt.Fprintf(w, "      vfs cache %s in %d files\n",
-						ui.Bytes(r.Daemon.VFS.BytesUsed, base10), r.Daemon.VFS.Files)
+					// Each figure is printed only where the response carried
+					// it: a cache with no size in the dump must read as "no
+					// size given", not as an empty one.
+					fmt.Fprintf(w, "      vfs cache %s in %s\n",
+						optBytes(r.Daemon.VFS.BytesUsed, r.Daemon.VFS.BytesSet, base10),
+						optFiles(r.Daemon.VFS.Files, r.Daemon.VFS.FilesSet))
 				} else {
 					fmt.Fprintln(w, "      vfs cache off")
 				}
@@ -173,9 +177,10 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 				}
 				fmt.Fprintf(w, "      bandwidth limit %s\n", limit)
 			}
-			if r.Daemon.Memory.Known {
+			if r.Daemon.Memory.Known() {
 				fmt.Fprintf(w, "      memory heap %s  sys %s\n",
-					ui.Bytes(r.Daemon.Memory.HeapAlloc, base10), ui.Bytes(r.Daemon.Memory.Sys, base10))
+					optBytes(r.Daemon.Memory.HeapAlloc, r.Daemon.Memory.HeapAllocSet, base10),
+					optBytes(r.Daemon.Memory.Sys, r.Daemon.Memory.SysSet, base10))
 			}
 		}
 		for _, p := range snap.SyncPairs {
@@ -286,6 +291,24 @@ func profileName(p termenv.Profile) string {
 	default:
 		return fmt.Sprintf("unrecognised (%d)", p)
 	}
+}
+
+// optBytes formats a byte count that an endpoint may not have supplied. The
+// dump exists to answer "what did the daemon actually say", so an absent figure
+// is named as absent rather than printed as a measured empty.
+func optBytes(n uint64, set, base10 bool) string {
+	if !set {
+		return "unknown"
+	}
+	return ui.Bytes(n, base10)
+}
+
+// optFiles is optBytes for a file count.
+func optFiles(n int, set bool) string {
+	if !set {
+		return "an unknown number of files"
+	}
+	return fmt.Sprintf("%d files", n)
 }
 
 // eta formats an estimate, keeping "rclone cannot say" distinct from "no time

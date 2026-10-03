@@ -332,12 +332,12 @@ func (r *RC) daemon(ctx context.Context, base string) model.RCDaemon {
 		if raw.HeapAlloc == nil && raw.Sys == nil {
 			return
 		}
-		mem := model.RCMemory{Known: true}
+		mem := model.RCMemory{}
 		if raw.HeapAlloc != nil {
-			mem.HeapAlloc = *raw.HeapAlloc
+			mem.HeapAlloc, mem.HeapAllocSet = *raw.HeapAlloc, true
 		}
 		if raw.Sys != nil {
-			mem.Sys = *raw.Sys
+			mem.Sys, mem.SysSet = *raw.Sys, true
 		}
 		mu.Lock()
 		d.Memory = mem
@@ -363,14 +363,14 @@ func (r *RC) daemon(ctx context.Context, base string) model.RCDaemon {
 		if err := r.postJSON(ctx, base, "/vfs/stats", "{}", &raw); err != nil {
 			return
 		}
-		vfs := model.RCVFS{Known: true}
+		vfs := model.RCVFS{Answered: true}
 		if raw.DiskCache != nil {
 			vfs.DiskCache = true
 			if raw.DiskCache.BytesUsed != nil {
-				vfs.BytesUsed = *raw.DiskCache.BytesUsed
+				vfs.BytesUsed, vfs.BytesSet = *raw.DiskCache.BytesUsed, true
 			}
 			if raw.DiskCache.Files != nil {
-				vfs.Files = *raw.DiskCache.Files
+				vfs.Files, vfs.FilesSet = *raw.DiskCache.Files, true
 			}
 		}
 		mu.Lock()

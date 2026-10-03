@@ -287,11 +287,21 @@ type RCDaemon struct {
 // RCMemory is the subset of core/memstats worth putting on screen. HeapAlloc is
 // what rclone is actually holding; Sys is everything it has asked the OS for,
 // which is virtual memory and may be mostly unused.
+//
+// Presence is per field, not for the group. A response that carried only one of
+// the two numbers is a real thing -- a partial endpoint, or a build whose
+// memstats struct does not have the other -- and the missing one is unknown,
+// not zero. Zero bytes of heap is a measurement, and the whole point of this
+// package is that it must not stand in for "nobody said".
 type RCMemory struct {
-	Known     bool
-	HeapAlloc uint64
-	Sys       uint64
+	HeapAlloc    uint64
+	HeapAllocSet bool
+	Sys          uint64
+	SysSet       bool
 }
+
+// Known reports whether core/memstats supplied at least one figure.
+func (m RCMemory) Known() bool { return m.HeapAllocSet || m.SysSet }
 
 // RCBandwidth is core/bwlimit's answer. rclone reports a negative rate for
 // "off", so Known is what separates a measured unlimited from a daemon nobody
@@ -302,15 +312,21 @@ type RCBandwidth struct {
 	Rate           string
 }
 
-// RCVFS is vfs/stats' disk cache for the daemon's VFS. DiskCache is false when
-// the daemon answered without one, which is a measurement rather than a gap:
-// --vfs-cache-mode off means there is no cache to report, and drawing that as
-// an unknown would hide the difference from a daemon that never answered.
+// RCVFS is vfs/stats' disk cache for the daemon's VFS.
+//
+// Answering and having-a-cache are different facts, and the fields are the same
+// three-way distinction again. Answered is true once vfs/stats replied at all;
+// DiskCache is true when that reply carried a diskCache block, false when it
+// said --vfs-cache-mode off and there is genuinely no cache; and BytesUsed/Set
+// and Files/Set each say whether that one number was present, because a
+// diskCache block can itself arrive partly filled.
 type RCVFS struct {
-	Known     bool
+	Answered  bool
 	DiskCache bool
 	BytesUsed uint64
+	BytesSet  bool
 	Files     int
+	FilesSet  bool
 }
 
 // RCJob is the lifecycle record rclone exposes for an asynchronous rc job.

@@ -85,12 +85,21 @@ func (m Model) rcDaemonLine(stats *model.RCStats) string {
 	if d.Version != "" {
 		parts = append(parts, m.label().Render("rclone ")+m.value().Render(d.Version))
 	}
-	if d.VFS.Known {
+	if d.VFS.Answered {
 		switch {
+		case d.VFS.DiskCache && d.VFS.BytesSet:
+			cache := m.label().Render("vfs cache ") +
+				m.accentStyle(accentCacheSize).Render(Bytes(d.VFS.BytesUsed, m.opts.Base10))
+			// The file count is its own measurement; a diskCache block that
+			// named no file count must not be drawn as zero files.
+			if d.VFS.FilesSet {
+				cache += m.label().Render(fmt.Sprintf(" (%d files)", d.VFS.Files))
+			}
+			parts = append(parts, cache)
 		case d.VFS.DiskCache:
-			parts = append(parts, m.label().Render("vfs cache ")+
-				m.accentStyle(accentCacheSize).Render(Bytes(d.VFS.BytesUsed, m.opts.Base10))+
-				m.label().Render(fmt.Sprintf(" (%d files)", d.VFS.Files)))
+			// A cache that answered without its size: there is one, but this
+			// response did not say how big.
+			parts = append(parts, m.label().Render("vfs cache"))
 		default:
 			// A measured "there is no cache" -- --vfs-cache-mode off -- which
 			// is news, so it is not left out.
@@ -104,11 +113,19 @@ func (m Model) rcDaemonLine(stats *model.RCStats) string {
 		}
 		parts = append(parts, m.label().Render("bwlimit ")+limit)
 	}
-	if d.Memory.Known {
-		parts = append(parts, m.label().Render("heap ")+
-			m.value().Render(Bytes(d.Memory.HeapAlloc, m.opts.Base10))+
-			m.label().Render(" / sys ")+
-			m.value().Render(Bytes(d.Memory.Sys, m.opts.Base10)))
+	// Each figure is drawn only if memstats supplied it. A response that carried
+	// only Sys must not print "heap 0 B", which reads as a measured empty heap.
+	if d.Memory.HeapAllocSet || d.Memory.SysSet {
+		var mem []string
+		if d.Memory.HeapAllocSet {
+			mem = append(mem, m.label().Render("heap ")+
+				m.value().Render(Bytes(d.Memory.HeapAlloc, m.opts.Base10)))
+		}
+		if d.Memory.SysSet {
+			mem = append(mem, m.label().Render("sys ")+
+				m.value().Render(Bytes(d.Memory.Sys, m.opts.Base10)))
+		}
+		parts = append(parts, strings.Join(mem, m.style("div_line").Render(" · ")))
 	}
 	if len(parts) == 0 {
 		return ""

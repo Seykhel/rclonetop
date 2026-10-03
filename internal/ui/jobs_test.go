@@ -97,9 +97,9 @@ func TestRCDaemonDetailsAreShownWithTheProcess(t *testing.T) {
 		Addr: proc.RCAddr,
 		Daemon: model.RCDaemon{
 			Version:   "v1.71.2",
-			Memory:    model.RCMemory{Known: true, HeapAlloc: 5 << 20, Sys: 40 << 20},
+			Memory:    model.RCMemory{HeapAlloc: 5 << 20, HeapAllocSet: true, Sys: 40 << 20, SysSet: true},
 			Bandwidth: model.RCBandwidth{Known: true, BytesPerSecond: 1 << 20, Rate: "1M"},
-			VFS:       model.RCVFS{Known: true, DiskCache: true, BytesUsed: 2 << 30, Files: 812},
+			VFS:       model.RCVFS{Answered: true, DiskCache: true, BytesUsed: 2 << 30, BytesSet: true, Files: 812, FilesSet: true},
 		},
 	}}
 
@@ -156,12 +156,56 @@ func TestAVFSWithNoDiskCacheIsSaidSo(t *testing.T) {
 	m := modelWithJobs([]model.Process{proc}, nil, now)
 	m.state.RCStats = []model.RCStats{{
 		Addr:   proc.RCAddr,
-		Daemon: model.RCDaemon{VFS: model.RCVFS{Known: true}},
+		Daemon: model.RCDaemon{VFS: model.RCVFS{Answered: true}},
 	}}
 
 	got := plainProcess(m, proc, 100)
 	if !strings.Contains(got, "vfs cache off") {
 		t.Errorf("a measured cache-off was not shown:\n%s", got)
+	}
+}
+
+// A partial memory response that carried only Sys must not draw "heap 0 B".
+// Zero bytes of heap is a measurement, and the daemon never made it.
+func TestOmittingOneMemoryFieldDoesNotDrawAZero(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:   proc.RCAddr,
+		Daemon: model.RCDaemon{Memory: model.RCMemory{Sys: 40 << 20, SysSet: true}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "sys 40 MiB") {
+		t.Errorf("the measured field was dropped:\n%s", got)
+	}
+	if strings.Contains(got, "heap") {
+		t.Errorf("an omitted HeapAlloc was drawn as a value:\n%s", got)
+	}
+}
+
+// A disk cache that named no size must not draw it as an empty cache.
+func TestAVFSCacheWithNoSizeDrawsNoZero(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr: proc.RCAddr,
+		Daemon: model.RCDaemon{VFS: model.RCVFS{
+			Answered: true, DiskCache: true, Files: 12, FilesSet: true,
+		}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "vfs cache") {
+		t.Errorf("the presence of a cache was dropped:\n%s", got)
+	}
+	// The process line prints its own legitimate zeros (rss, rd, wr), so the
+	// check is scoped to the cache segment: "vfs cache" immediately followed by
+	// a byte figure would be the invented one.
+	if strings.Contains(got, "vfs cache 0 B") {
+		t.Errorf("an unmeasured cache size was drawn as zero:\n%s", got)
 	}
 }
 
