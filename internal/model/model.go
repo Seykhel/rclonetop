@@ -255,6 +255,7 @@ type RCStats struct {
 	Addr   string
 	Stats  JobStats
 	Jobs   []RCJob
+	Daemon RCDaemon
 	At     time.Time
 	Source Source
 
@@ -262,6 +263,70 @@ type RCStats struct {
 	// terms as Job.Transferring: nil when the daemon has not been asked yet,
 	// non-nil and possibly empty once it has answered.
 	Transferring []Transfer
+}
+
+// RCDaemon is what a daemon says about itself rather than about the work it is
+// doing: which rclone it is, the resources it holds and the bandwidth limit it
+// was given.
+//
+// Every group is independently optional on purpose. The endpoints behind them
+// are separate calls, and a daemon built without one of them -- an older
+// binary, or a response this parser does not recognise -- must leave that group
+// unknown rather than fail the whole snapshot or, worse, report a measured
+// zero. "No bandwidth limit" and "nobody said" are opposite answers.
+type RCDaemon struct {
+	// Version is the rclone version string from core/version, empty when the
+	// daemon did not answer.
+	Version string
+
+	Memory    RCMemory
+	Bandwidth RCBandwidth
+	VFS       RCVFS
+}
+
+// RCMemory is the subset of core/memstats worth putting on screen. HeapAlloc is
+// what rclone is actually holding; Sys is everything it has asked the OS for,
+// which is virtual memory and may be mostly unused.
+//
+// Presence is per field, not for the group. A response that carried only one of
+// the two numbers is a real thing -- a partial endpoint, or a build whose
+// memstats struct does not have the other -- and the missing one is unknown,
+// not zero. Zero bytes of heap is a measurement, and the whole point of this
+// package is that it must not stand in for "nobody said".
+type RCMemory struct {
+	HeapAlloc    uint64
+	HeapAllocSet bool
+	Sys          uint64
+	SysSet       bool
+}
+
+// Known reports whether core/memstats supplied at least one figure.
+func (m RCMemory) Known() bool { return m.HeapAllocSet || m.SysSet }
+
+// RCBandwidth is core/bwlimit's answer. rclone reports a negative rate for
+// "off", so Known is what separates a measured unlimited from a daemon nobody
+// asked: past the sign there is no way to tell the two apart.
+type RCBandwidth struct {
+	Known          bool
+	BytesPerSecond int64
+	Rate           string
+}
+
+// RCVFS is vfs/stats' disk cache for the daemon's VFS.
+//
+// Answering and having-a-cache are different facts, and the fields are the same
+// three-way distinction again. Answered is true once vfs/stats replied at all;
+// DiskCache is true when that reply carried a diskCache block, false when it
+// said --vfs-cache-mode off and there is genuinely no cache; and BytesUsed/Set
+// and Files/Set each say whether that one number was present, because a
+// diskCache block can itself arrive partly filled.
+type RCVFS struct {
+	Answered  bool
+	DiskCache bool
+	BytesUsed uint64
+	BytesSet  bool
+	Files     int
+	FilesSet  bool
 }
 
 // RCJob is the lifecycle record rclone exposes for an asynchronous rc job.
@@ -277,6 +342,21 @@ type RCJob struct {
 	Duration     time.Duration
 	StartTime    time.Time
 	EndTime      time.Time
+}
+
+// Measured reports whether this JobStats carries anything at all. It is false
+// for the zero value, which is not "a run that moved nothing" but the absence
+// of an accounting object -- and the distinction is the one this whole package
+// keeps: a zero and an unmeasured value mean opposite things.
+//
+// It exists because JobStats holds a map and so cannot be compared to its own
+// zero value, which is how callers would otherwise ask the question.
+func (s JobStats) Measured() bool {
+	return s.Known != 0 || s.Source != "" || s.Bytes != 0 || s.TotalBytes != 0 ||
+		s.Transfers != 0 || s.TotalTransfers != 0 || s.Checks != 0 ||
+		s.TotalChecks != 0 || s.Errors != 0 || s.FatalError ||
+		s.Deletes != 0 || s.Renames != 0 || s.Speed != 0 ||
+		s.Elapsed != 0 || s.ETA != 0 || s.ETAKnown
 }
 
 // Done reports the fraction of the run's bytes that have moved, and whether

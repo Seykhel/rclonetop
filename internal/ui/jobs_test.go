@@ -86,6 +86,163 @@ func TestRCProgressIsShownAlongsideTheProcess(t *testing.T) {
 	}
 }
 
+// The daemon's own details sit under the process line, alongside the accounting
+// for its run: which rclone it is, what it is caching and any limit it was
+// given.
+func TestRCDaemonDetailsAreShownWithTheProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr: proc.RCAddr,
+		Daemon: model.RCDaemon{
+			Version:   "v1.71.2",
+			Memory:    model.RCMemory{HeapAlloc: 5 << 20, HeapAllocSet: true, Sys: 40 << 20, SysSet: true},
+			Bandwidth: model.RCBandwidth{Known: true, BytesPerSecond: 1 << 20, Rate: "1M"},
+			VFS:       model.RCVFS{Answered: true, DiskCache: true, BytesUsed: 2 << 30, BytesSet: true, Files: 812, FilesSet: true},
+		},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	for _, want := range []string{"rclone v1.71.2", "vfs cache", "2.0 GiB", "(812 files)", "bwlimit", "1.0 MiB/s", "heap", "40 MiB"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	// The line is drawn once. A fragment wired into both the call site and the
+	// RC progress block printed every field twice, and Contains alone could not
+	// see it.
+	if n := strings.Count(got, "rclone v1.71.2"); n != 1 {
+		t.Errorf("the daemon line was drawn %d times, want once:\n%s", n, got)
+	}
+}
+
+// A daemon that answered no detail endpoint has nothing to say, and the line
+// must not appear with invented zeros beside it.
+func TestNoDaemonDetailsDrawsNothing(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{Addr: proc.RCAddr}}
+
+	if got := plainProcess(m, proc, 100); strings.Contains(got, "rclone ") || strings.Contains(got, "bwlimit") || strings.Contains(got, "heap") {
+		t.Errorf("a daemon with no details drew a line anyway:\n%s", got)
+	}
+}
+
+// An unlimited daemon is a measurement, not a gap: bwlimit is shown, and "off"
+// is what it says. rclone reports it as a negative rate, which a naive
+// Rate would clamp to a measured zero.
+func TestUnlimitedBandwidthIsMeasuredNotUnknown(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:   proc.RCAddr,
+		Daemon: model.RCDaemon{Bandwidth: model.RCBandwidth{Known: true, BytesPerSecond: -1, Rate: "off"}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "bwlimit off") {
+		t.Errorf("unlimited bandwidth was not rendered as off:\n%s", got)
+	}
+}
+
+// --vfs-cache-mode off is a real answer and worth saying: the daemon has no
+// disk cache. It is a different fact from the endpoint never answering.
+func TestAVFSWithNoDiskCacheIsSaidSo(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:   proc.RCAddr,
+		Daemon: model.RCDaemon{VFS: model.RCVFS{Answered: true}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "vfs cache off") {
+		t.Errorf("a measured cache-off was not shown:\n%s", got)
+	}
+}
+
+// A partial memory response that carried only Sys must not draw "heap 0 B".
+// Zero bytes of heap is a measurement, and the daemon never made it.
+func TestOmittingOneMemoryFieldDoesNotDrawAZero(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:   proc.RCAddr,
+		Daemon: model.RCDaemon{Memory: model.RCMemory{Sys: 40 << 20, SysSet: true}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "sys 40 MiB") {
+		t.Errorf("the measured field was dropped:\n%s", got)
+	}
+	if strings.Contains(got, "heap") {
+		t.Errorf("an omitted HeapAlloc was drawn as a value:\n%s", got)
+	}
+}
+
+// A disk cache that named no size must not draw it as an empty cache.
+func TestAVFSCacheWithNoSizeDrawsNoZero(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr: proc.RCAddr,
+		Daemon: model.RCDaemon{VFS: model.RCVFS{
+			Answered: true, DiskCache: true, Files: 12, FilesSet: true,
+		}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "vfs cache") {
+		t.Errorf("the presence of a cache was dropped:\n%s", got)
+	}
+	// The process line prints its own legitimate zeros (rss, rd, wr), so the
+	// check is scoped to the cache segment: "vfs cache" immediately followed by
+	// a byte figure would be the invented one.
+	if strings.Contains(got, "vfs cache 0 B") {
+		t.Errorf("an unmeasured cache size was drawn as zero:\n%s", got)
+	}
+}
+
+// The file list can come from the daemon rather than from a log -- the normal
+// case for a long-lived mount, which nothing tells to write one. Resolve folds
+// it onto the process's job, and it has to render exactly like a log's list.
+//
+// "Exactly like" is asserted by comparing the two renders rather than by
+// re-listing the expected fields here: the same literals copied into both tests
+// would drift together and prove nothing about the two paths agreeing, which is
+// the one thing this test exists to check.
+func TestRCCurrentTransfersRenderExactlyLikeALogs(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	transfer := model.Transfer{
+		Name: "notes.pdf", Bytes: 100 << 20, BytesKnown: true, Size: 128 << 20,
+		Percentage: 78, Speed: 3 << 20, ETA: 7 * time.Second, ETAKnown: true,
+	}
+
+	proc := model.Process{PID: 193345, Kind: model.KindMount, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+
+	fromRC := modelWithJobs([]model.Process{proc}, nil, now)
+	fromRC.state.RCStats = []model.RCStats{{Addr: proc.RCAddr, Transferring: []model.Transfer{transfer}}}
+
+	fromLog := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Transferring: []model.Transfer{transfer},
+	}}, now)
+
+	rc, log := plainProcess(fromRC, proc, 100), plainProcess(fromLog, proc, 100)
+	if rc != log {
+		t.Errorf("a daemon's file list rendered differently from a log's:\nRC:\n%s\nlog:\n%s", rc, log)
+	}
+	if !strings.Contains(rc, "notes.pdf") {
+		t.Fatalf("the file list never reached the screen:\n%s", rc)
+	}
+}
+
 func TestAsyncRCJobsShowKnownOutcomesWithoutInventingOne(t *testing.T) {
 	now := time.Unix(1787433722, 0)
 	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}

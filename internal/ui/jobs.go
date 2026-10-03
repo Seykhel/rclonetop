@@ -47,14 +47,90 @@ func (m Model) rcProgress(stats *model.RCStats) string {
 	// Core statistics have already been merged into the process job by Resolve.
 	// Keep the old rendering for hand-built legacy values, but do not print the
 	// same measurement twice for an RC response carrying presence metadata.
+	//
+	// A value with neither presence bits nor a source is not a legacy
+	// measurement at all -- it is a daemon that has answered only the
+	// "transferring" key, and its zero Stats must stay silent rather than draw
+	// "bytes 0 B / 0 B". The two are told apart by whether anything was
+	// actually measured, not by the source alone.
 	line := ""
-	if stats.Stats.Known == 0 && stats.Stats.Source != model.SourceRC {
+	if stats.Stats.Known == 0 && stats.Stats.Source != model.SourceRC && stats.Stats.Measured() {
 		line = m.statsProgress(stats.Stats, "RC ")
 	}
 	for _, job := range stats.Jobs {
 		line += m.rcJobLine(job)
 	}
 	return line
+}
+
+// rcDaemonLine is what the daemon says about itself: which rclone it is, the
+// resources it holds and any bandwidth limit it was given.
+//
+// Every group is drawn only when the daemon answered it. The endpoints behind
+// them are separate calls that an older rclone may not implement, and the one
+// rule this line has to keep is the same one the progress line keeps: an
+// unanswered detail is unknown, never a zero. A bandwidth of "off" is a
+// measurement -- rclone reports it as a negative rate -- and it must not read
+// the same as a daemon that was never asked.
+//
+// The memory figure is "why is this mount eating RAM", which is the VFS cache
+// most often; on the daemon's own line rather than the process's because it is
+// the daemon, not the kernel process, that the number describes.
+func (m Model) rcDaemonLine(stats *model.RCStats) string {
+	if stats == nil {
+		return ""
+	}
+	d := stats.Daemon
+	var parts []string
+	if d.Version != "" {
+		parts = append(parts, m.label().Render("rclone ")+m.value().Render(d.Version))
+	}
+	if d.VFS.Answered {
+		switch {
+		case d.VFS.DiskCache && d.VFS.BytesSet:
+			cache := m.label().Render("vfs cache ") +
+				m.accentStyle(accentCacheSize).Render(Bytes(d.VFS.BytesUsed, m.opts.Base10))
+			// The file count is its own measurement; a diskCache block that
+			// named no file count must not be drawn as zero files.
+			if d.VFS.FilesSet {
+				cache += m.label().Render(fmt.Sprintf(" (%d files)", d.VFS.Files))
+			}
+			parts = append(parts, cache)
+		case d.VFS.DiskCache:
+			// A cache that answered without its size: there is one, but this
+			// response did not say how big.
+			parts = append(parts, m.label().Render("vfs cache"))
+		default:
+			// A measured "there is no cache" -- --vfs-cache-mode off -- which
+			// is news, so it is not left out.
+			parts = append(parts, m.label().Render("vfs cache off"))
+		}
+	}
+	if d.Bandwidth.Known {
+		limit := m.value().Render("off")
+		if d.Bandwidth.BytesPerSecond >= 0 {
+			limit = m.value().Render(Rate(float64(d.Bandwidth.BytesPerSecond), m.opts.Base10))
+		}
+		parts = append(parts, m.label().Render("bwlimit ")+limit)
+	}
+	// Each figure is drawn only if memstats supplied it. A response that carried
+	// only Sys must not print "heap 0 B", which reads as a measured empty heap.
+	if d.Memory.HeapAllocSet || d.Memory.SysSet {
+		var mem []string
+		if d.Memory.HeapAllocSet {
+			mem = append(mem, m.label().Render("heap ")+
+				m.value().Render(Bytes(d.Memory.HeapAlloc, m.opts.Base10)))
+		}
+		if d.Memory.SysSet {
+			mem = append(mem, m.label().Render("sys ")+
+				m.value().Render(Bytes(d.Memory.Sys, m.opts.Base10)))
+		}
+		parts = append(parts, strings.Join(mem, m.style("div_line").Render(" · ")))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  " + strings.Join(parts, m.style("div_line").Render(" · ")) + "\n"
 }
 
 func (m Model) rcJobLine(job model.RCJob) string {

@@ -131,6 +131,35 @@ type coreStatsResponse struct {
 	Transferring []jsonTransfer `json:"transferring"`
 }
 
+type versionResponse struct {
+	Version *string `json:"version"`
+}
+
+// core/memstats marshals the whole of runtime.MemStats, but only these two
+// numbers answer a question a monitor has: what rclone is holding, and what it
+// has asked the OS for. They are pointers so that a daemon whose response omits
+// one leaves it unknown instead of zero.
+type memStatsResponse struct {
+	HeapAlloc *uint64 `json:"HeapAlloc"`
+	Sys       *uint64 `json:"Sys"`
+}
+
+type bwLimitResponse struct {
+	BytesPerSecond *int64  `json:"bytesPerSecond"`
+	Rate           *string `json:"rate"`
+}
+
+// vfs/stats answers with the option block too, which this parser ignores. The
+// diskCache block is absent when --vfs-cache-mode is off, and always absent
+// when the daemon serves no VFS at all -- in which case the call itself fails
+// and the whole group stays unknown (see daemon).
+type vfsStatsResponse struct {
+	DiskCache *struct {
+		BytesUsed *uint64 `json:"bytesUsed"`
+		Files     *int    `json:"files"`
+	} `json:"diskCache"`
+}
+
 type jobListResponse struct {
 	JobIDs *[]int `json:"jobids"`
 }
@@ -164,6 +193,12 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 			err  error
 		}{jobs, err}
 	}()
+	// The daemon's own resources come from four more endpoints. They run
+	// alongside core/stats and the job poll instead of after them: five
+	// sequential requests against a two-second client timeout would make a
+	// single collection outlast its own interval.
+	daemonResult := make(chan model.RCDaemon, 1)
+	go func() { daemonResult <- r.daemon(ctx, base) }()
 	url = base + "/core/stats"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
 	if err != nil {
@@ -254,6 +289,7 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 		stats.Stats.ETAKnown = *raw.ETA >= 0
 		stats.Stats.Known |= model.StatsETA
 	}
+	stats.Daemon = <-daemonResult
 	select {
 	case result := <-jobResult:
 		stats.Jobs = result.jobs
@@ -264,6 +300,85 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 		return stats, fmt.Errorf("%s: job polling: %w", addr, jobCtx.Err())
 	}
 	return stats, nil
+}
+
+// daemon reads the four endpoints that describe the daemon itself, each on its
+// own. A failure -- an endpoint an older rclone does not implement, a response
+// this build cannot parse, a daemon serving no VFS -- leaves that group unknown
+// and is otherwise silent: the snapshot still carries core/stats, jobs and
+// whatever other groups did answer, and a detail endpoint going quiet must not
+// be reported as the daemon having gone quiet.
+func (r *RC) daemon(ctx context.Context, base string) model.RCDaemon {
+	var d model.RCDaemon
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		var raw versionResponse
+		if err := r.postJSON(ctx, base, "/core/version", "{}", &raw); err == nil && raw.Version != nil {
+			mu.Lock()
+			d.Version = *raw.Version
+			mu.Unlock()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		var raw memStatsResponse
+		if err := r.postJSON(ctx, base, "/core/memstats", "{}", &raw); err != nil {
+			return
+		}
+		if raw.HeapAlloc == nil && raw.Sys == nil {
+			return
+		}
+		mem := model.RCMemory{}
+		if raw.HeapAlloc != nil {
+			mem.HeapAlloc, mem.HeapAllocSet = *raw.HeapAlloc, true
+		}
+		if raw.Sys != nil {
+			mem.Sys, mem.SysSet = *raw.Sys, true
+		}
+		mu.Lock()
+		d.Memory = mem
+		mu.Unlock()
+	}()
+	go func() {
+		defer wg.Done()
+		var raw bwLimitResponse
+		if err := r.postJSON(ctx, base, "/core/bwlimit", "{}", &raw); err != nil || raw.BytesPerSecond == nil {
+			return
+		}
+		bw := model.RCBandwidth{Known: true, BytesPerSecond: *raw.BytesPerSecond}
+		if raw.Rate != nil {
+			bw.Rate = *raw.Rate
+		}
+		mu.Lock()
+		d.Bandwidth = bw
+		mu.Unlock()
+	}()
+	go func() {
+		defer wg.Done()
+		var raw vfsStatsResponse
+		if err := r.postJSON(ctx, base, "/vfs/stats", "{}", &raw); err != nil {
+			return
+		}
+		vfs := model.RCVFS{Answered: true}
+		if raw.DiskCache != nil {
+			vfs.DiskCache = true
+			if raw.DiskCache.BytesUsed != nil {
+				vfs.BytesUsed, vfs.BytesSet = *raw.DiskCache.BytesUsed, true
+			}
+			if raw.DiskCache.Files != nil {
+				vfs.Files, vfs.FilesSet = *raw.DiskCache.Files, true
+			}
+		}
+		mu.Lock()
+		d.VFS = vfs
+		mu.Unlock()
+	}()
+	wg.Wait()
+	return d
 }
 
 func (r *RC) jobs(ctx context.Context, addr string) ([]model.RCJob, error) {
