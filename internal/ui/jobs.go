@@ -21,21 +21,22 @@ import (
 // branch below and renders nothing -- the same answer as before, without a
 // second way of spelling "there is nothing to say".
 func (m Model) jobProgress(job model.Job) string {
+	var warning string
 	if job.ReadError != "" {
 		// The same distinction the throughput line makes for an unreadable
 		// /proc/<pid>/io: a job that stands still because nobody can read its
 		// log looks exactly like one with nothing to do, and saying which is
 		// the whole point.
-		return "  " + m.style("inactive_fg").Render("log unreadable: ") +
+		warning = "  " + m.style("inactive_fg").Render("log unreadable: ") +
 			m.style("hi_fg").Render(oneLine(job.ReadError)) + "\n"
 	}
 	if !job.HaveStats {
-		return ""
+		return warning
 	}
 	if job.Stats.Source == model.SourceRC {
-		return m.statsProgress(job.Stats, "RC ")
+		return warning + m.statsProgress(job.Stats, "RC ")
 	}
-	return m.statsProgress(job.Stats, "")
+	return warning + m.statsProgress(job.Stats, "")
 }
 
 // rcProgress renders asynchronous daemon jobs. Core statistics are merged into
