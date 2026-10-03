@@ -165,6 +165,29 @@ func TestAVFSWithNoDiskCacheIsSaidSo(t *testing.T) {
 	}
 }
 
+// The file list can come from the daemon rather than from a log -- the normal
+// case for a long-lived mount, which nothing tells to write one. Resolve folds
+// it onto the process's job, and it has to render exactly like a log's list.
+func TestRCCurrentTransfersRenderUnderTheirProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, Kind: model.KindMount, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr: proc.RCAddr,
+		Transferring: []model.Transfer{
+			{Name: "notes.pdf", Bytes: 100 << 20, BytesKnown: true, Size: 128 << 20,
+				Percentage: 78, Speed: 3 << 20, ETA: 7 * time.Second, ETAKnown: true},
+		},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	for _, want := range []string{"notes.pdf", "78% of 128 MiB", "3.0 MiB/s", "ETA 7s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestAsyncRCJobsShowKnownOutcomesWithoutInventingOne(t *testing.T) {
 	now := time.Unix(1787433722, 0)
 	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
