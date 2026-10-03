@@ -47,8 +47,14 @@ func (m Model) rcProgress(stats *model.RCStats) string {
 	// Core statistics have already been merged into the process job by Resolve.
 	// Keep the old rendering for hand-built legacy values, but do not print the
 	// same measurement twice for an RC response carrying presence metadata.
+	//
+	// A value with neither presence bits nor a source is not a legacy
+	// measurement at all -- it is a daemon that has answered only the
+	// "transferring" key, and its zero Stats must stay silent rather than draw
+	// "bytes 0 B / 0 B". The two are told apart by whether anything was
+	// actually measured, not by the source alone.
 	line := ""
-	if stats.Stats.Known == 0 && stats.Stats.Source != model.SourceRC {
+	if stats.Stats.Known == 0 && stats.Stats.Source != model.SourceRC && stats.Stats.Measured() {
 		line = m.statsProgress(stats.Stats, "RC ")
 	}
 	for _, job := range stats.Jobs {

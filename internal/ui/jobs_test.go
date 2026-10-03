@@ -168,23 +168,34 @@ func TestAVFSWithNoDiskCacheIsSaidSo(t *testing.T) {
 // The file list can come from the daemon rather than from a log -- the normal
 // case for a long-lived mount, which nothing tells to write one. Resolve folds
 // it onto the process's job, and it has to render exactly like a log's list.
-func TestRCCurrentTransfersRenderUnderTheirProcess(t *testing.T) {
+//
+// "Exactly like" is asserted by comparing the two renders rather than by
+// re-listing the expected fields here: the same literals copied into both tests
+// would drift together and prove nothing about the two paths agreeing, which is
+// the one thing this test exists to check.
+func TestRCCurrentTransfersRenderExactlyLikeALogs(t *testing.T) {
 	now := time.Unix(1787433722, 0)
-	proc := model.Process{PID: 193345, Kind: model.KindMount, RCAddr: "127.0.0.1:5572", IOAvailable: true}
-	m := modelWithJobs([]model.Process{proc}, nil, now)
-	m.state.RCStats = []model.RCStats{{
-		Addr: proc.RCAddr,
-		Transferring: []model.Transfer{
-			{Name: "notes.pdf", Bytes: 100 << 20, BytesKnown: true, Size: 128 << 20,
-				Percentage: 78, Speed: 3 << 20, ETA: 7 * time.Second, ETAKnown: true},
-		},
-	}}
+	transfer := model.Transfer{
+		Name: "notes.pdf", Bytes: 100 << 20, BytesKnown: true, Size: 128 << 20,
+		Percentage: 78, Speed: 3 << 20, ETA: 7 * time.Second, ETAKnown: true,
+	}
 
-	got := plainProcess(m, proc, 100)
-	for _, want := range []string{"notes.pdf", "78% of 128 MiB", "3.0 MiB/s", "ETA 7s"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in:\n%s", want, got)
-		}
+	proc := model.Process{PID: 193345, Kind: model.KindMount, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+
+	fromRC := modelWithJobs([]model.Process{proc}, nil, now)
+	fromRC.state.RCStats = []model.RCStats{{Addr: proc.RCAddr, Transferring: []model.Transfer{transfer}}}
+
+	fromLog := modelWithJobs([]model.Process{proc}, []model.Job{{
+		LogFile: "/var/log/rclone.log", PID: 193345, HaveStats: true,
+		Transferring: []model.Transfer{transfer},
+	}}, now)
+
+	rc, log := plainProcess(fromRC, proc, 100), plainProcess(fromLog, proc, 100)
+	if rc != log {
+		t.Errorf("a daemon's file list rendered differently from a log's:\nRC:\n%s\nlog:\n%s", rc, log)
+	}
+	if !strings.Contains(rc, "notes.pdf") {
+		t.Fatalf("the file list never reached the screen:\n%s", rc)
 	}
 }
 

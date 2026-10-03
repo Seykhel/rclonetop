@@ -328,6 +328,21 @@ type RCJob struct {
 	EndTime      time.Time
 }
 
+// Measured reports whether this JobStats carries anything at all. It is false
+// for the zero value, which is not "a run that moved nothing" but the absence
+// of an accounting object -- and the distinction is the one this whole package
+// keeps: a zero and an unmeasured value mean opposite things.
+//
+// It exists because JobStats holds a map and so cannot be compared to its own
+// zero value, which is how callers would otherwise ask the question.
+func (s JobStats) Measured() bool {
+	return s.Known != 0 || s.Source != "" || s.Bytes != 0 || s.TotalBytes != 0 ||
+		s.Transfers != 0 || s.TotalTransfers != 0 || s.Checks != 0 ||
+		s.TotalChecks != 0 || s.Errors != 0 || s.FatalError ||
+		s.Deletes != 0 || s.Renames != 0 || s.Speed != 0 ||
+		s.Elapsed != 0 || s.ETA != 0 || s.ETAKnown
+}
+
 // Done reports the fraction of the run's bytes that have moved, and whether
 // that fraction means anything. A total of zero is a run with nothing to
 // transfer, not a run that is nought per cent complete.
