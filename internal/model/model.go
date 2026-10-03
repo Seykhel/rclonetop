@@ -290,7 +290,6 @@ type RCDaemon struct {
 type RCMemory struct {
 	Known     bool
 	HeapAlloc uint64
-	HeapSys   uint64
 	Sys       uint64
 }
 

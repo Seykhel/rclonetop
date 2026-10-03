@@ -109,6 +109,12 @@ func TestRCDaemonDetailsAreShownWithTheProcess(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
+	// The line is drawn once. A fragment wired into both the call site and the
+	// RC progress block printed every field twice, and Contains alone could not
+	// see it.
+	if n := strings.Count(got, "rclone v1.71.2"); n != 1 {
+		t.Errorf("the daemon line was drawn %d times, want once:\n%s", n, got)
+	}
 }
 
 // A daemon that answered no detail endpoint has nothing to say, and the line

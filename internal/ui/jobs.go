@@ -54,7 +54,7 @@ func (m Model) rcProgress(stats *model.RCStats) string {
 	for _, job := range stats.Jobs {
 		line += m.rcJobLine(job)
 	}
-	return line + m.rcDaemonLine(stats.Daemon)
+	return line
 }
 
 // rcDaemonLine is what the daemon says about itself: which rclone it is, the
@@ -70,7 +70,11 @@ func (m Model) rcProgress(stats *model.RCStats) string {
 // The memory figure is "why is this mount eating RAM", which is the VFS cache
 // most often; on the daemon's own line rather than the process's because it is
 // the daemon, not the kernel process, that the number describes.
-func (m Model) rcDaemonLine(d model.RCDaemon) string {
+func (m Model) rcDaemonLine(stats *model.RCStats) string {
+	if stats == nil {
+		return ""
+	}
+	d := stats.Daemon
 	var parts []string
 	if d.Version != "" {
 		parts = append(parts, m.label().Render("rclone ")+m.value().Render(d.Version))
@@ -88,7 +92,7 @@ func (m Model) rcDaemonLine(d model.RCDaemon) string {
 		}
 	}
 	if d.Bandwidth.Known {
-		limit := m.style("inactive_fg").Render("off")
+		limit := m.value().Render("off")
 		if d.Bandwidth.BytesPerSecond >= 0 {
 			limit = m.value().Render(Rate(float64(d.Bandwidth.BytesPerSecond), m.opts.Base10))
 		}
@@ -104,15 +108,6 @@ func (m Model) rcDaemonLine(d model.RCDaemon) string {
 		return ""
 	}
 	return "  " + strings.Join(parts, m.style("div_line").Render(" · ")) + "\n"
-}
-
-// daemonOf reads the daemon details off a resolved row, where the zero value
-// stands for "no daemon was found for this process" and renders nothing.
-func daemonOf(stats *model.RCStats) model.RCDaemon {
-	if stats == nil {
-		return model.RCDaemon{}
-	}
-	return stats.Daemon
 }
 
 func (m Model) rcJobLine(job model.RCJob) string {

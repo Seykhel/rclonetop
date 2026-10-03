@@ -218,7 +218,7 @@ func TestRCCollectsDaemonDetails(t *testing.T) {
 		case "/core/version":
 			_, _ = w.Write([]byte(`{"version":"v1.71.2","goVersion":"go1.25.0","os":"linux"}`))
 		case "/core/memstats":
-			_, _ = w.Write([]byte(`{"HeapAlloc":1048576,"HeapSys":2097152,"Sys":8388608}`))
+			_, _ = w.Write([]byte(`{"HeapAlloc":1048576,"HeapSys":2097152,"Sys":8388608,"NumGC":7}`))
 		case "/core/bwlimit":
 			_, _ = w.Write([]byte(`{"bytesPerSecond":1048576,"rate":"1M","bytesPerSecondTx":1048576,"bytesPerSecondRx":131072}`))
 		case "/vfs/stats":
@@ -237,7 +237,7 @@ func TestRCCollectsDaemonDetails(t *testing.T) {
 	if d.Version != "v1.71.2" {
 		t.Errorf("version = %q", d.Version)
 	}
-	if !d.Memory.Known || d.Memory.HeapAlloc != 1048576 || d.Memory.HeapSys != 2097152 || d.Memory.Sys != 8388608 {
+	if !d.Memory.Known || d.Memory.HeapAlloc != 1048576 || d.Memory.Sys != 8388608 {
 		t.Errorf("memory = %+v", d.Memory)
 	}
 	if !d.Bandwidth.Known || d.Bandwidth.BytesPerSecond != 1048576 || d.Bandwidth.Rate != "1M" {
@@ -286,7 +286,7 @@ func TestRCPartialDaemonDetailsLeaveTheRestUnknown(t *testing.T) {
 // back as a vfs/stats without a diskCache block. That must stay distinct from
 // the call having failed: Known says we asked and got an answer, DiskCache says
 // the answer was "none".
-func TestRVVFSWithoutADiskCacheIsMeasuredRatherThanUnknown(t *testing.T) {
+func TestRCVFSWithoutADiskCacheIsMeasuredRatherThanUnknown(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch req.URL.Path {
@@ -337,6 +337,68 @@ func TestRCUnlimitedBandwidthStaysDistinctFromUnknown(t *testing.T) {
 	bw := snap.RCStats[0].Daemon.Bandwidth
 	if !bw.Known || bw.BytesPerSecond != -1 || bw.Rate != "off" {
 		t.Errorf("bandwidth = %+v, want a measured unlimited", bw)
+	}
+}
+
+// A detail endpoint that answers with something this parser cannot read leaves
+// its group unknown, exactly like one that is simply absent. It must not fail
+// the collection, and it must not corrupt the other groups.
+func TestRCMalformedDaemonDetailLeavesOnlyThatGroupUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/core/stats":
+			_, _ = w.Write([]byte(`{"bytes":42}`))
+		case "/job/list":
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+		case "/core/memstats":
+			_, _ = w.Write([]byte(`not json`))
+		case "/core/version":
+			_, _ = w.Write([]byte(`{"version":"v1.71.2"}`))
+		}
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("a malformed detail response failed the collection: %v", err)
+	}
+	d := snap.RCStats[0].Daemon
+	if d.Memory.Known {
+		t.Errorf("malformed memstats was reported as a measurement: %+v", d.Memory)
+	}
+	if d.Version != "v1.71.2" {
+		t.Errorf("a malformed endpoint corrupted another group: %+v", d)
+	}
+}
+
+// A core/stats response omitting a memstats field must leave it unknown rather
+// than zero: zero bytes of heap is a real answer and means something else.
+func TestRCMemoryFieldsOmittedStayUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/core/stats":
+			_, _ = w.Write([]byte(`{}`))
+		case "/job/list":
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+		case "/core/memstats":
+			_, _ = w.Write([]byte(`{"Sys":8388608}`))
+		}
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	mem := snap.RCStats[0].Daemon.Memory
+	if !mem.Known || mem.Sys != 8388608 || mem.HeapAlloc != 0 {
+		t.Errorf("memory = %+v", mem)
 	}
 }
 

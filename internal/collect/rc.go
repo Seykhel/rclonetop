@@ -135,12 +135,12 @@ type versionResponse struct {
 	Version *string `json:"version"`
 }
 
-// core/memstats marshals the whole of runtime.MemStats, but only these three
-// numbers answer a question a monitor has. They are pointers so that a daemon
-// whose response omits one leaves it unknown instead of zero.
+// core/memstats marshals the whole of runtime.MemStats, but only these two
+// numbers answer a question a monitor has: what rclone is holding, and what it
+// has asked the OS for. They are pointers so that a daemon whose response omits
+// one leaves it unknown instead of zero.
 type memStatsResponse struct {
 	HeapAlloc *uint64 `json:"HeapAlloc"`
-	HeapSys   *uint64 `json:"HeapSys"`
 	Sys       *uint64 `json:"Sys"`
 }
 
@@ -329,15 +329,12 @@ func (r *RC) daemon(ctx context.Context, base string) model.RCDaemon {
 		if err := r.postJSON(ctx, base, "/core/memstats", "{}", &raw); err != nil {
 			return
 		}
-		if raw.HeapAlloc == nil && raw.HeapSys == nil && raw.Sys == nil {
+		if raw.HeapAlloc == nil && raw.Sys == nil {
 			return
 		}
 		mem := model.RCMemory{Known: true}
 		if raw.HeapAlloc != nil {
 			mem.HeapAlloc = *raw.HeapAlloc
-		}
-		if raw.HeapSys != nil {
-			mem.HeapSys = *raw.HeapSys
 		}
 		if raw.Sys != nil {
 			mem.Sys = *raw.Sys

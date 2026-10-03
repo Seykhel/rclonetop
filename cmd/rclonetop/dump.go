@@ -155,29 +155,27 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 			// group nobody answered would put "no bandwidth limit" and "no
 			// memory in use" in the bug report, which is the opposite of what
 			// an unreachable endpoint is saying.
-			if d := r.Daemon; true {
-				if d.Version != "" {
-					fmt.Fprintf(w, "      version %s\n", d.Version)
+			if r.Daemon.Version != "" {
+				fmt.Fprintf(w, "      version %s\n", r.Daemon.Version)
+			}
+			if r.Daemon.VFS.Known {
+				if r.Daemon.VFS.DiskCache {
+					fmt.Fprintf(w, "      vfs cache %s in %d files\n",
+						ui.Bytes(r.Daemon.VFS.BytesUsed, base10), r.Daemon.VFS.Files)
+				} else {
+					fmt.Fprintln(w, "      vfs cache off")
 				}
-				if d.VFS.Known {
-					if d.VFS.DiskCache {
-						fmt.Fprintf(w, "      vfs cache %s in %d files\n",
-							ui.Bytes(d.VFS.BytesUsed, base10), d.VFS.Files)
-					} else {
-						fmt.Fprintln(w, "      vfs cache off")
-					}
+			}
+			if r.Daemon.Bandwidth.Known {
+				limit := "off"
+				if r.Daemon.Bandwidth.BytesPerSecond >= 0 {
+					limit = ui.Rate(float64(r.Daemon.Bandwidth.BytesPerSecond), base10)
 				}
-				if d.Bandwidth.Known {
-					limit := "off"
-					if d.Bandwidth.BytesPerSecond >= 0 {
-						limit = ui.Rate(float64(d.Bandwidth.BytesPerSecond), base10)
-					}
-					fmt.Fprintf(w, "      bandwidth limit %s\n", limit)
-				}
-				if d.Memory.Known {
-					fmt.Fprintf(w, "      memory heap %s  sys %s\n",
-						ui.Bytes(d.Memory.HeapAlloc, base10), ui.Bytes(d.Memory.Sys, base10))
-				}
+				fmt.Fprintf(w, "      bandwidth limit %s\n", limit)
+			}
+			if r.Daemon.Memory.Known {
+				fmt.Fprintf(w, "      memory heap %s  sys %s\n",
+					ui.Bytes(r.Daemon.Memory.HeapAlloc, base10), ui.Bytes(r.Daemon.Memory.Sys, base10))
 			}
 		}
 		for _, p := range snap.SyncPairs {
