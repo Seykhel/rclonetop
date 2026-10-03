@@ -1,6 +1,7 @@
 package model
 
 import (
+	"maps"
 	"sort"
 	"time"
 )
@@ -158,6 +159,7 @@ func (s *State) procRows() []ProcRow {
 // observation intact rather than turn it into a misleading zero.
 func mergeStats(local, exact JobStats, localKnown bool) JobStats {
 	merged := local
+	merged.Sources = maps.Clone(local.Sources)
 	if merged.Source == "" {
 		merged.Source = SourceLog
 	}
