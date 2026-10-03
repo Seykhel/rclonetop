@@ -101,6 +101,16 @@ func TestParseFlagsAcceptsConfigInBothForms(t *testing.T) {
 	}
 }
 
+func TestParseFlagsAcceptsRCCredentials(t *testing.T) {
+	o, err := parseFlags([]string{"--rc-user", "monitor", "--rc-pass", "not-for-output"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if o.rcUser != "monitor" || o.rcPass != "not-for-output" {
+		t.Error("RC credentials were not retained for the collector")
+	}
+}
+
 func TestParseFlagsRecordsOnlyWhatWasTyped(t *testing.T) {
 	o, err := parseFlags([]string{"-u", "500"})
 	if err != nil {

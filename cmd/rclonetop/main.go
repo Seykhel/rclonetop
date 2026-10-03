@@ -144,7 +144,7 @@ func run() error {
 	bisync := collect.NewBisync()
 	logs := collect.NewLogs()
 	procs := collect.NewProcs()
-	rc := collect.NewRC()
+	rc := collect.NewRCWithCredentials(nil, flags.rcUser, flags.rcPass)
 	procs.OnProcesses(systemd.NoteProcesses)
 	procs.OnProcesses(logs.NoteProcesses)
 	procs.OnProcesses(rc.NoteProcesses)

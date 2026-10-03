@@ -37,6 +37,8 @@ type options struct {
 	defaultConfig   bool
 	showHelp        bool
 	showVersion     bool
+	rcUser          string
+	rcPass          string
 
 	// clockLayout has no flag of its own: a Go reference layout is too fiddly
 	// to type at a prompt and too rarely changed to deserve one, so the
@@ -135,6 +137,12 @@ func parseFlags(args []string) (options, error) {
 	num(&o.preset, 0, "p", "preset")
 	boolean(&o.debug, false, "d", "debug")
 	boolean(&o.noAltScreen, false, "no-alt-screen")
+	// RC credentials are deliberately command-line only. A configuration file
+	// is designed to be copied, printed and kept for years; a password does not
+	// belong in that surface. They are held only by the RC collector and are
+	// never rendered or included in diagnostics.
+	str(&o.rcUser, "", "rc-user")
+	str(&o.rcPass, "", "rc-pass")
 	str(&o.configPath, "", "c", "config")
 	boolean(&o.defaultConfig, false, "default-config")
 	boolean(&o.showHelp, false, "h", "help")
@@ -291,6 +299,8 @@ Options:
   -l, --low-color         limit output to 256 colours
 	  -p, --preset <0..9>     view/layout to start in: 0 dense, 1-9 framed
       --no-alt-screen     draw in place instead of on the alternate screen
+      --rc-user <name>   HTTP Basic username for discovered RC endpoints
+      --rc-pass <value>  HTTP Basic password for discovered RC endpoints
   -c, --config <file>     read this configuration file instead of searching
       --default-config    print a commented default configuration, then exit
   -d, --debug             print what each collector saw, then exit

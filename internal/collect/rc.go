@@ -21,9 +21,11 @@ const maxRCJobs = 256
 // RC reads rclone's read-only remote-control API from addresses already found
 // in the process table. It never guesses an address and never scans the host.
 type RC struct {
-	mu     sync.Mutex
-	addrs  map[string]bool
-	client *http.Client
+	mu       sync.Mutex
+	addrs    map[string]bool
+	client   *http.Client
+	username string
+	password string
 }
 
 // NewRC returns an RC collector using bounded HTTP requests.
@@ -33,6 +35,14 @@ func NewRC() *RC {
 
 // NewRCWith is the test seam for the HTTP transport.
 func NewRCWith(client *http.Client) *RC {
+	return NewRCWithCredentials(client, "", "")
+}
+
+// NewRCWithCredentials returns an RC collector that authenticates requests
+// with HTTP Basic authentication when either credential is set. Credentials
+// are applied only after an endpoint has been learned from a process command
+// line, never while discovering endpoints.
+func NewRCWithCredentials(client *http.Client, username, password string) *RC {
 	if client == nil {
 		client = &http.Client{Timeout: rcTimeout}
 	}
@@ -42,7 +52,12 @@ func NewRCWith(client *http.Client) *RC {
 	bounded.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &RC{addrs: make(map[string]bool), client: &bounded}
+	return &RC{
+		addrs:    make(map[string]bool),
+		client:   &bounded,
+		username: username,
+		password: password,
+	}
 }
 
 func (r *RC) Name() string            { return "rc" }
@@ -199,30 +214,9 @@ func (r *RC) stats(ctx context.Context, addr string) (model.RCStats, error) {
 	// single collection outlast its own interval.
 	daemonResult := make(chan model.RCDaemon, 1)
 	go func() { daemonResult <- r.daemon(ctx, base) }()
-	url = base + "/core/stats"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
-	if err != nil {
-		return model.RCStats{}, fmt.Errorf("%s: %w", addr, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return model.RCStats{}, fmt.Errorf("%s: %w", addr, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return model.RCStats{}, fmt.Errorf("%s: HTTP %s", addr, resp.Status)
-	}
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
 	var raw coreStatsResponse
-	if err := decoder.Decode(&raw); err != nil {
-		return model.RCStats{}, fmt.Errorf("%s: invalid core/stats response: %w", addr, err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return model.RCStats{}, fmt.Errorf("%s: invalid core/stats response: multiple JSON values", addr)
-		}
-		return model.RCStats{}, fmt.Errorf("%s: invalid core/stats response: trailing data: %w", addr, err)
+	if err := r.postJSON(ctx, base, "/core/stats", "{}", &raw); err != nil {
+		return model.RCStats{}, err
 	}
 	stats := model.RCStats{
 		Addr:   addr,
@@ -469,12 +463,18 @@ func (r *RC) postJSON(ctx context.Context, addr, path, body string, out any) err
 		return fmt.Errorf("%s%s: %w", addr, path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if r.username != "" || r.password != "" {
+		req.SetBasicAuth(r.username, r.password)
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s%s: %w", addr, path, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("%s%s: authentication rejected or credentials required (HTTP %s)", addr, path, resp.Status)
+		}
 		return fmt.Errorf("%s%s: HTTP %s", addr, path, resp.Status)
 	}
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))

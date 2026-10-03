@@ -157,6 +157,8 @@ rclonetop [options]
 | `-t`, `--tty` | force TTY mode: 8 colours, and ASCII graphs — but a `--theme` or `--graph-symbol` named alongside it still wins |
 | `-l`, `--low-color` | limit output to 256 colours |
 | `--no-alt-screen` | draw in place instead of on the alternate screen |
+| `--rc-user <name>` | HTTP Basic username for the RC endpoints discovered from running rclone processes |
+| `--rc-pass <value>` | HTTP Basic password for those discovered RC endpoints |
 | `-p`, `--preset <0..9>` | view/layout to start in: `0` dense (default), `1`-`9` framed |
 | `-c`, `--config <file>` | read this configuration file instead of searching |
 | `--default-config` | print a commented default configuration, then exit |
@@ -169,6 +171,11 @@ Keys: `q` or `Esc` to quit, `p` to alternate the dense view and the framed one,
 or slower, and in the framed view, `1`-`4` to
 hide or show the transfers, bandwidth, files and status panels for the rest
 of the session.
+
+RC credentials are intentionally command-line-only: rclonetop holds them only
+while it runs and never shows them in its diagnostic output or UI. They are sent
+only to endpoints discovered from observed rclone command lines. As with any
+command-line password, use a shell/history mechanism appropriate for your host.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
 already tuned there carries over. `--vim-keys` still has nothing on screen to
