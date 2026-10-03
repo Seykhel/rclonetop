@@ -201,10 +201,30 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 				p.IOAvailable,
 				ui.Bytes(p.ReadTotal, base10), ui.Rate(p.ReadRate, base10),
 				ui.Bytes(p.WriteTotal, base10), ui.Rate(p.WriteRate, base10))
-			fmt.Fprintf(w, "      args %s\n", strings.Join(p.Args, " "))
+			fmt.Fprintf(w, "      args %s\n", diagnosticArgs(p.Args))
 		}
 	}
 	return nil
+}
+
+// diagnosticArgs preserves the observed command line while hiding RC secrets
+// in the dump users are asked to share. Work on a copy: other collectors still
+// need the original arguments.
+func diagnosticArgs(args []string) string {
+	redacted := append([]string(nil), args...)
+	for i := 0; i < len(redacted); i++ {
+		key, _, inline := strings.Cut(redacted[i], "=")
+		if key != "--rc-user" && key != "--rc-pass" {
+			continue
+		}
+		if inline {
+			redacted[i] = key + "=[redacted]"
+		} else if i+1 < len(redacted) {
+			i++
+			redacted[i] = "[redacted]"
+		}
+	}
+	return strings.Join(redacted, " ")
 }
 
 // display is what -d reports about how the screen would have been coloured.

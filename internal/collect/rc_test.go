@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +52,76 @@ func TestRCCollectsCoreStatsFromObservedEndpoint(t *testing.T) {
 	}
 	if got.Addr != server.URL || got.Source != model.SourceRC || got.At.IsZero() {
 		t.Errorf("identity = %+v", got)
+	}
+}
+
+func TestRCLeavesUnauthenticatedRequestsUnauthenticated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if _, _, ok := req.BasicAuth(); ok {
+			t.Fatalf("%s unexpectedly carried HTTP Basic credentials", req.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"bytes":1}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	if _, err := rc.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+}
+
+func TestRCAuthenticatesRequestsToObservedEndpoint(t *testing.T) {
+	const user, password = "monitor", "not-for-errors"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotUser, gotPassword, ok := req.BasicAuth()
+		if !ok || gotUser != user || gotPassword != password {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/job/list" {
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"bytes":1}`))
+	}))
+	defer server.Close()
+
+	rc := NewRCWithCredentials(server.Client(), user, password)
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snap.RCStats) != 1 || snap.RCStats[0].Stats.Bytes != 1 {
+		t.Fatalf("stats = %+v, want the authenticated core/stats response", snap.RCStats)
+	}
+}
+
+func TestRCReportsRejectedCredentialsWithoutExposingThem(t *testing.T) {
+	const user, password = "monitor", "not-for-errors"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	rc := NewRCWithCredentials(server.Client(), user, password)
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	_, err := rc.Collect(context.Background())
+	if err == nil {
+		t.Fatal("Collect succeeded with rejected credentials")
+	}
+	if !strings.Contains(err.Error(), "authentication") {
+		t.Errorf("Collect error = %q, want a clear authentication error", err)
+	}
+	if strings.Contains(err.Error(), user) || strings.Contains(err.Error(), password) {
+		t.Errorf("Collect error exposed a credential: %q", err)
 	}
 }
 
@@ -481,7 +552,7 @@ func TestRCDoesNotProbeBeforeProcessesAreObserved(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true }))
 	defer server.Close()
 
-	rc := NewRCWith(server.Client())
+	rc := NewRCWithCredentials(server.Client(), "monitor", "not-for-output")
 	snap, err := rc.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect: %v", err)

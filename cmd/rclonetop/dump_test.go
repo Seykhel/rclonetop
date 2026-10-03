@@ -2,15 +2,53 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Seykhel/rclonetop/internal/collect"
+	"github.com/Seykhel/rclonetop/internal/model"
 	"github.com/muesli/termenv"
 
 	"github.com/Seykhel/rclonetop/internal/ui/graph"
 )
+
+type credentialDumpCollector struct{ args []string }
+
+func (c credentialDumpCollector) Name() string            { return "proc" }
+func (c credentialDumpCollector) Source() model.Source    { return model.SourceProc }
+func (c credentialDumpCollector) Interval() time.Duration { return time.Second }
+func (c credentialDumpCollector) Available() bool         { return true }
+func (c credentialDumpCollector) Collect(context.Context) (model.Snapshot, error) {
+	return model.Snapshot{Source: model.SourceProc, Processes: []model.Process{{Args: c.args}}}, nil
+}
+
+func TestDumpRedactsRCCredentials(t *testing.T) {
+	for _, args := range [][]string{
+		{"rclone", "rcd", "--rc-user", "private-user", "--rc-pass", "private-pass", "--rc-addr", "localhost:5572"},
+		{"rclone", "rcd", "--rc-user=private-user", "--rc-pass=private-pass", "--rc-addr=localhost:5572"},
+	} {
+		original := strings.Join(args, " ")
+		var out bytes.Buffer
+		if err := dump(context.Background(), &out, []collect.Collector{credentialDumpCollector{args}}, false, display{}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "private-user") || strings.Contains(out.String(), "private-pass") {
+			t.Error("diagnostic output exposed RC credentials")
+		}
+		for _, want := range []string{"rclone rcd", "--rc-user", "--rc-pass", "localhost:5572", "[redacted]"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("diagnostic output missing %q", want)
+			}
+		}
+		if strings.Join(args, " ") != original {
+			t.Error("dump changed the collector's process arguments")
+		}
+	}
+}
 
 func TestWriteDisplayAnswersTheColourQuestion(t *testing.T) {
 	// "The colours look washed out" has three candidate causes and a screenshot
