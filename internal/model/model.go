@@ -292,6 +292,16 @@ func (s JobStats) Done() (float64, bool) {
 	return float64(s.Bytes) / float64(s.TotalBytes), true
 }
 
+// Sentinels for a Transfer measurement its source did not supply. A size, a
+// percentage and a rate are each non-negative, so -1 stands outside every real
+// value; zero cannot, because zero is a real answer for all three -- an empty
+// file, a transfer not yet begun, a rate rclone measured as nought.
+const (
+	UnknownSize       int64   = -1
+	UnknownPercentage int     = -1
+	UnknownSpeed      float64 = -1
+)
+
 // Transfer is one file rclone has in flight: what it is, how far through it is,
 // and how fast it is going.
 //
@@ -308,9 +318,10 @@ type Transfer struct {
 	// the name arrives whole.
 	Name string
 
-	// Percentage is how far through this file rclone says it is, 0 to 100. It
-	// is the one progress figure both log formats carry, and the only one the
-	// text form carries at all.
+	// Percentage is how far through this file rclone says it is, 0 to 100, or
+	// UnknownPercentage when the record did not carry one. It is the one
+	// progress figure both log formats carry, and the only one the text form
+	// carries at all.
 	Percentage int
 
 	// Bytes is how much of the file has moved, and BytesKnown is false for a
@@ -320,13 +331,15 @@ type Transfer struct {
 	Bytes      uint64
 	BytesKnown bool
 
-	// Size is the file's total size, or -1 when rclone does not know it -- what
-	// it records for a source that cannot be sized before the transfer starts.
-	// Zero is a real answer, an empty file, so it cannot stand for this one.
+	// Size is the file's total size, or UnknownSize when rclone does not know
+	// it -- what it records for a source that cannot be sized before the
+	// transfer starts. Zero is a real answer, an empty file, so it cannot stand
+	// for this one.
 	Size int64
 
-	// Speed is this file's own rate in bytes per second, which is a different
-	// quantity from JobStats.Speed: that one averages the whole run.
+	// Speed is this file's own rate in bytes per second, or UnknownSpeed when
+	// the record did not measure one. It is a different quantity from
+	// JobStats.Speed: that one averages the whole run.
 	//
 	// The two formats do not measure it the same way. The JSON object's "speed"
 	// is the file's average over its own life; the text line prints rclone's

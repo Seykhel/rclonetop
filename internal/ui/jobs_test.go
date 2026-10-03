@@ -420,6 +420,29 @@ func TestAFileOfUnknownSizeIsNotCalledEmpty(t *testing.T) {
 	}
 }
 
+// A partial record can leave the percentage and the rate unmeasured, and zero
+// stands for a real measurement in both cases: "0%" says the file has not
+// begun, "0 B/s" says it has stalled. The dash says neither was measured.
+func TestAFileWithNoPercentageOrRateIsNotGivenZeros(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	m := modelWithJobs(nil, nil, now)
+	tf := model.Transfer{
+		Name: "unknown.bin", Percentage: model.UnknownPercentage,
+		Size: 3 << 20, Speed: model.UnknownSpeed,
+	}
+
+	got := stripStyles(m.inFlightFigures(tf, true))
+	if strings.Contains(got, "0%") {
+		t.Errorf("an unmeasured percentage was rendered as 0%%: %q", got)
+	}
+	if strings.Contains(got, "B/s") {
+		t.Errorf("an unmeasured rate was rendered as a measurement: %q", got)
+	}
+	if !strings.Contains(got, "of 3.0 MiB") {
+		t.Errorf("the known size vanished: %q", got)
+	}
+}
+
 // A run with --transfers 16 would otherwise push everything below it off the
 // screen. What is left out is counted: four rows and no count read as a job
 // with four files left in it.
