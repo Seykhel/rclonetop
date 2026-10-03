@@ -54,7 +54,65 @@ func (m Model) rcProgress(stats *model.RCStats) string {
 	for _, job := range stats.Jobs {
 		line += m.rcJobLine(job)
 	}
-	return line
+	return line + m.rcDaemonLine(stats.Daemon)
+}
+
+// rcDaemonLine is what the daemon says about itself: which rclone it is, the
+// resources it holds and any bandwidth limit it was given.
+//
+// Every group is drawn only when the daemon answered it. The endpoints behind
+// them are separate calls that an older rclone may not implement, and the one
+// rule this line has to keep is the same one the progress line keeps: an
+// unanswered detail is unknown, never a zero. A bandwidth of "off" is a
+// measurement -- rclone reports it as a negative rate -- and it must not read
+// the same as a daemon that was never asked.
+//
+// The memory figure is "why is this mount eating RAM", which is the VFS cache
+// most often; on the daemon's own line rather than the process's because it is
+// the daemon, not the kernel process, that the number describes.
+func (m Model) rcDaemonLine(d model.RCDaemon) string {
+	var parts []string
+	if d.Version != "" {
+		parts = append(parts, m.label().Render("rclone ")+m.value().Render(d.Version))
+	}
+	if d.VFS.Known {
+		switch {
+		case d.VFS.DiskCache:
+			parts = append(parts, m.label().Render("vfs cache ")+
+				m.accentStyle(accentCacheSize).Render(Bytes(d.VFS.BytesUsed, m.opts.Base10))+
+				m.label().Render(fmt.Sprintf(" (%d files)", d.VFS.Files)))
+		default:
+			// A measured "there is no cache" -- --vfs-cache-mode off -- which
+			// is news, so it is not left out.
+			parts = append(parts, m.label().Render("vfs cache off"))
+		}
+	}
+	if d.Bandwidth.Known {
+		limit := m.style("inactive_fg").Render("off")
+		if d.Bandwidth.BytesPerSecond >= 0 {
+			limit = m.value().Render(Rate(float64(d.Bandwidth.BytesPerSecond), m.opts.Base10))
+		}
+		parts = append(parts, m.label().Render("bwlimit ")+limit)
+	}
+	if d.Memory.Known {
+		parts = append(parts, m.label().Render("heap ")+
+			m.value().Render(Bytes(d.Memory.HeapAlloc, m.opts.Base10))+
+			m.label().Render(" / sys ")+
+			m.value().Render(Bytes(d.Memory.Sys, m.opts.Base10)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  " + strings.Join(parts, m.style("div_line").Render(" · ")) + "\n"
+}
+
+// daemonOf reads the daemon details off a resolved row, where the zero value
+// stands for "no daemon was found for this process" and renders nothing.
+func daemonOf(stats *model.RCStats) model.RCDaemon {
+	if stats == nil {
+		return model.RCDaemon{}
+	}
+	return stats.Daemon
 }
 
 func (m Model) rcJobLine(job model.RCJob) string {

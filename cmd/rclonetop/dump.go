@@ -151,6 +151,34 @@ func dump(ctx context.Context, w io.Writer, collectors []collect.Collector, base
 				}
 				fmt.Fprintf(w, "      async job %d  %s  error=%q\n", j.ID, state, j.Error)
 			}
+			// Each of these is independently absent. Printing a zero for a
+			// group nobody answered would put "no bandwidth limit" and "no
+			// memory in use" in the bug report, which is the opposite of what
+			// an unreachable endpoint is saying.
+			if d := r.Daemon; true {
+				if d.Version != "" {
+					fmt.Fprintf(w, "      version %s\n", d.Version)
+				}
+				if d.VFS.Known {
+					if d.VFS.DiskCache {
+						fmt.Fprintf(w, "      vfs cache %s in %d files\n",
+							ui.Bytes(d.VFS.BytesUsed, base10), d.VFS.Files)
+					} else {
+						fmt.Fprintln(w, "      vfs cache off")
+					}
+				}
+				if d.Bandwidth.Known {
+					limit := "off"
+					if d.Bandwidth.BytesPerSecond >= 0 {
+						limit = ui.Rate(float64(d.Bandwidth.BytesPerSecond), base10)
+					}
+					fmt.Fprintf(w, "      bandwidth limit %s\n", limit)
+				}
+				if d.Memory.Known {
+					fmt.Fprintf(w, "      memory heap %s  sys %s\n",
+						ui.Bytes(d.Memory.HeapAlloc, base10), ui.Bytes(d.Memory.Sys, base10))
+				}
+			}
 		}
 		for _, p := range snap.SyncPairs {
 			fmt.Fprintf(w, "   sync %q\n", p.Name)

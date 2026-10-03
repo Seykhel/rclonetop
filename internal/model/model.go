@@ -255,6 +255,7 @@ type RCStats struct {
 	Addr   string
 	Stats  JobStats
 	Jobs   []RCJob
+	Daemon RCDaemon
 	At     time.Time
 	Source Source
 
@@ -262,6 +263,55 @@ type RCStats struct {
 	// terms as Job.Transferring: nil when the daemon has not been asked yet,
 	// non-nil and possibly empty once it has answered.
 	Transferring []Transfer
+}
+
+// RCDaemon is what a daemon says about itself rather than about the work it is
+// doing: which rclone it is, the resources it holds and the bandwidth limit it
+// was given.
+//
+// Every group is independently optional on purpose. The endpoints behind them
+// are separate calls, and a daemon built without one of them -- an older
+// binary, or a response this parser does not recognise -- must leave that group
+// unknown rather than fail the whole snapshot or, worse, report a measured
+// zero. "No bandwidth limit" and "nobody said" are opposite answers.
+type RCDaemon struct {
+	// Version is the rclone version string from core/version, empty when the
+	// daemon did not answer.
+	Version string
+
+	Memory    RCMemory
+	Bandwidth RCBandwidth
+	VFS       RCVFS
+}
+
+// RCMemory is the subset of core/memstats worth putting on screen. HeapAlloc is
+// what rclone is actually holding; Sys is everything it has asked the OS for,
+// which is virtual memory and may be mostly unused.
+type RCMemory struct {
+	Known     bool
+	HeapAlloc uint64
+	HeapSys   uint64
+	Sys       uint64
+}
+
+// RCBandwidth is core/bwlimit's answer. rclone reports a negative rate for
+// "off", so Known is what separates a measured unlimited from a daemon nobody
+// asked: past the sign there is no way to tell the two apart.
+type RCBandwidth struct {
+	Known          bool
+	BytesPerSecond int64
+	Rate           string
+}
+
+// RCVFS is vfs/stats' disk cache for the daemon's VFS. DiskCache is false when
+// the daemon answered without one, which is a measurement rather than a gap:
+// --vfs-cache-mode off means there is no cache to report, and drawing that as
+// an unknown would hide the difference from a daemon that never answered.
+type RCVFS struct {
+	Known     bool
+	DiskCache bool
+	BytesUsed uint64
+	Files     int
 }
 
 // RCJob is the lifecycle record rclone exposes for an asynchronous rc job.

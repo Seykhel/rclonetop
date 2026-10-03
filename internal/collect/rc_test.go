@@ -204,6 +204,142 @@ func TestRCRejectsMalformedTransferringEntry(t *testing.T) {
 	}
 }
 
+// core/version, core/memstats, core/bwlimit and vfs/stats are four separate
+// calls describing the daemon rather than the work it is doing. A daemon that
+// answers all of them must have every field carried through.
+func TestRCCollectsDaemonDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/core/stats":
+			_, _ = w.Write([]byte(`{}`))
+		case "/job/list":
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+		case "/core/version":
+			_, _ = w.Write([]byte(`{"version":"v1.71.2","goVersion":"go1.25.0","os":"linux"}`))
+		case "/core/memstats":
+			_, _ = w.Write([]byte(`{"HeapAlloc":1048576,"HeapSys":2097152,"Sys":8388608}`))
+		case "/core/bwlimit":
+			_, _ = w.Write([]byte(`{"bytesPerSecond":1048576,"rate":"1M","bytesPerSecondTx":1048576,"bytesPerSecondRx":131072}`))
+		case "/vfs/stats":
+			_, _ = w.Write([]byte(`{"fs":"/mnt/a","inUse":1,"diskCache":{"bytesUsed":4194304,"files":12,"path":"/cache"},"metadataCache":{"dirs":1,"files":0}}`))
+		}
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	d := snap.RCStats[0].Daemon
+	if d.Version != "v1.71.2" {
+		t.Errorf("version = %q", d.Version)
+	}
+	if !d.Memory.Known || d.Memory.HeapAlloc != 1048576 || d.Memory.HeapSys != 2097152 || d.Memory.Sys != 8388608 {
+		t.Errorf("memory = %+v", d.Memory)
+	}
+	if !d.Bandwidth.Known || d.Bandwidth.BytesPerSecond != 1048576 || d.Bandwidth.Rate != "1M" {
+		t.Errorf("bandwidth = %+v", d.Bandwidth)
+	}
+	if !d.VFS.Known || !d.VFS.DiskCache || d.VFS.BytesUsed != 4194304 || d.VFS.Files != 12 {
+		t.Errorf("vfs = %+v", d.VFS)
+	}
+}
+
+// An older daemon is missing one or more of the endpoints. Each group it did
+// not answer must stay unknown, and -- the point -- the snapshot must still be
+// delivered: a detail endpoint that 404s cannot fail the collection.
+func TestRCPartialDaemonDetailsLeaveTheRestUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/core/stats":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"bytes":42}`))
+		case "/job/list":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+		case "/core/version":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"v1.60.0"}`))
+		default:
+			// core/memstats and vfs/stats are not implemented.
+			http.Error(w, "couldn't find method", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("a missing detail endpoint failed the collection: %v", err)
+	}
+	d := snap.RCStats[0].Daemon
+	if d.Version != "v1.60.0" || d.Memory.Known || d.Bandwidth.Known || d.VFS.Known {
+		t.Errorf("partial details = %+v, want only the version", d)
+	}
+}
+
+// --vfs-cache-mode off is a real answer -- there is no cache -- and it comes
+// back as a vfs/stats without a diskCache block. That must stay distinct from
+// the call having failed: Known says we asked and got an answer, DiskCache says
+// the answer was "none".
+func TestRVVFSWithoutADiskCacheIsMeasuredRatherThanUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/core/stats":
+			_, _ = w.Write([]byte(`{}`))
+		case "/job/list":
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+		case "/vfs/stats":
+			_, _ = w.Write([]byte(`{"fs":"/mnt/a","inUse":1,"metadataCache":{"dirs":1,"files":0}}`))
+		}
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	vfs := snap.RCStats[0].Daemon.VFS
+	if !vfs.Known || vfs.DiskCache {
+		t.Errorf("vfs = %+v, want a measured cache-off", vfs)
+	}
+}
+
+// rclone reports a bandwidth of "off" as a negative rate. A daemon nobody asked
+// reports nothing at all, and the two must not collapse into one another.
+func TestRCUnlimitedBandwidthStaysDistinctFromUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/core/stats":
+			_, _ = w.Write([]byte(`{}`))
+		case "/job/list":
+			_, _ = w.Write([]byte(`{"jobids":[]}`))
+		case "/core/bwlimit":
+			_, _ = w.Write([]byte(`{"bytesPerSecond":-1,"rate":"off"}`))
+		}
+	}))
+	defer server.Close()
+
+	rc := NewRCWith(server.Client())
+	rc.NoteProcesses([]model.Process{{RCAddr: server.URL}})
+	snap, err := rc.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	bw := snap.RCStats[0].Daemon.Bandwidth
+	if !bw.Known || bw.BytesPerSecond != -1 || bw.Rate != "off" {
+		t.Errorf("bandwidth = %+v, want a measured unlimited", bw)
+	}
+}
+
 func TestRCCollectsAsyncJobStatuses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

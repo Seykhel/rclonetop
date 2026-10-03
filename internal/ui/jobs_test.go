@@ -86,6 +86,79 @@ func TestRCProgressIsShownAlongsideTheProcess(t *testing.T) {
 	}
 }
 
+// The daemon's own details sit under the process line, alongside the accounting
+// for its run: which rclone it is, what it is caching and any limit it was
+// given.
+func TestRCDaemonDetailsAreShownWithTheProcess(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr: proc.RCAddr,
+		Daemon: model.RCDaemon{
+			Version:   "v1.71.2",
+			Memory:    model.RCMemory{Known: true, HeapAlloc: 5 << 20, Sys: 40 << 20},
+			Bandwidth: model.RCBandwidth{Known: true, BytesPerSecond: 1 << 20, Rate: "1M"},
+			VFS:       model.RCVFS{Known: true, DiskCache: true, BytesUsed: 2 << 30, Files: 812},
+		},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	for _, want := range []string{"rclone v1.71.2", "vfs cache", "2.0 GiB", "(812 files)", "bwlimit", "1.0 MiB/s", "heap", "40 MiB"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// A daemon that answered no detail endpoint has nothing to say, and the line
+// must not appear with invented zeros beside it.
+func TestNoDaemonDetailsDrawsNothing(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{Addr: proc.RCAddr}}
+
+	if got := plainProcess(m, proc, 100); strings.Contains(got, "rclone ") || strings.Contains(got, "bwlimit") || strings.Contains(got, "heap") {
+		t.Errorf("a daemon with no details drew a line anyway:\n%s", got)
+	}
+}
+
+// An unlimited daemon is a measurement, not a gap: bwlimit is shown, and "off"
+// is what it says. rclone reports it as a negative rate, which a naive
+// Rate would clamp to a measured zero.
+func TestUnlimitedBandwidthIsMeasuredNotUnknown(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:   proc.RCAddr,
+		Daemon: model.RCDaemon{Bandwidth: model.RCBandwidth{Known: true, BytesPerSecond: -1, Rate: "off"}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "bwlimit off") {
+		t.Errorf("unlimited bandwidth was not rendered as off:\n%s", got)
+	}
+}
+
+// --vfs-cache-mode off is a real answer and worth saying: the daemon has no
+// disk cache. It is a different fact from the endpoint never answering.
+func TestAVFSWithNoDiskCacheIsSaidSo(t *testing.T) {
+	now := time.Unix(1787433722, 0)
+	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
+	m := modelWithJobs([]model.Process{proc}, nil, now)
+	m.state.RCStats = []model.RCStats{{
+		Addr:   proc.RCAddr,
+		Daemon: model.RCDaemon{VFS: model.RCVFS{Known: true}},
+	}}
+
+	got := plainProcess(m, proc, 100)
+	if !strings.Contains(got, "vfs cache off") {
+		t.Errorf("a measured cache-off was not shown:\n%s", got)
+	}
+}
+
 func TestAsyncRCJobsShowKnownOutcomesWithoutInventingOne(t *testing.T) {
 	now := time.Unix(1787433722, 0)
 	proc := model.Process{PID: 193345, RCAddr: "127.0.0.1:5572", IOAvailable: true}
