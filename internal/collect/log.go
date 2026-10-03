@@ -479,20 +479,18 @@ type jsonStats struct {
 // name the two ends, which the job already knows, and group names rclone's own
 // accounting bucket.
 //
-// Bytes, Size and ETA are pointers because an absent field is not a zero: a
-// zero byte count says the file has not started moving and a zero size says it
-// is empty, while an omitted field says nothing was measured at all. rclone
-// always sends these, so this only matters for a response that filled the
-// record in part -- which is exactly when an invented zero would be read as
-// fact. Percentage and Speed stay plain values because model.Transfer has no
-// unknown spelling for them: rclone writes both into every transfer record, and
-// the text log carries no other value for either.
+// Bytes, Size, Percentage, Speed and ETA are pointers because an absent field
+// is not a zero: a zero byte count, percentage or rate is a measurement rclone
+// made, and a zero size is an empty file, while an omitted field says nothing
+// was measured at all. rclone always sends them, so this only matters for a
+// response that filled the record in part -- which is exactly when an invented
+// zero would be read as fact.
 type jsonTransfer struct {
 	Name       string   `json:"name"`
 	Bytes      *uint64  `json:"bytes"`
 	Size       *int64   `json:"size"`
-	Percentage int      `json:"percentage"`
-	Speed      float64  `json:"speed"`
+	Percentage *int     `json:"percentage"`
+	Speed      *float64 `json:"speed"`
 	ETA        *float64 `json:"eta"`
 }
 
@@ -639,20 +637,26 @@ func (s jsonStats) transfers() []model.Transfer {
 func toTransfers(ts []jsonTransfer) []model.Transfer {
 	out := make([]model.Transfer, 0, len(ts))
 	for _, t := range ts {
+		// Every measurement starts unknown and is overwritten only where the
+		// record carried it; see jsonTransfer for why an absent field must not
+		// land on its zero.
 		m := model.Transfer{
 			Name:       t.Name,
-			Percentage: t.Percentage,
-			// UnknownSize is how the model spells "rclone has not sized this",
-			// so it is also what an entry that omitted the size means. Leaving
-			// the zero value would draw an empty file instead.
-			Size:  model.UnknownSize,
-			Speed: t.Speed,
+			Percentage: model.UnknownPercentage,
+			Size:       model.UnknownSize,
+			Speed:      model.UnknownSpeed,
+		}
+		if t.Percentage != nil {
+			m.Percentage = *t.Percentage
 		}
 		if t.Bytes != nil {
 			m.Bytes, m.BytesKnown = *t.Bytes, true
 		}
 		if t.Size != nil {
 			m.Size = *t.Size
+		}
+		if t.Speed != nil {
+			m.Speed = *t.Speed
 		}
 		// A negative estimate is rclone declining to make one, the same as it
 		// does for the run's own ETA; a known negative duration would read as
@@ -1035,7 +1039,7 @@ func parseTransferLine(line string) (model.Transfer, bool) {
 	// Bytes is left unknown on purpose. The line gives the percentage and the
 	// total and no third figure, and multiplying a total by a percentage
 	// rounded to a whole number would invent a byte count rclone never wrote.
-	t := model.Transfer{Name: m[1], Percentage: pct, Size: model.UnknownSize}
+	t := model.Transfer{Name: m[1], Percentage: pct, Size: model.UnknownSize, Speed: model.UnknownSpeed}
 
 	if size, ok := parseLogSize(m[3]); ok {
 		t.Size = int64(size)

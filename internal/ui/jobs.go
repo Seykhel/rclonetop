@@ -293,9 +293,10 @@ func (m Model) inFlightFigures(t model.Transfer, withETA bool) string {
 		// host has shown -- so it is blended rather than indexed. The ramp is
 		// chosen, and chosen without much to go on: a transfer record does not
 		// say which way the bytes are moving, so this is the hue for "a file is
-		// going somewhere" and not a claim about direction.
-		m.magnitudeStyle("upload", t.Speed/m.rateScale()).
-			Render(Rate(t.Speed, m.opts.Base10)),
+		// going somewhere" and not a claim about direction. An unmeasured rate
+		// gets the same dash every other unknown here gets; Rate would clamp it
+		// to zero and claim the file is stalled.
+		m.inFlightSpeed(t),
 	}
 	if withETA && t.ETAKnown {
 		// Same bargain as the run's own estimate: rclone writes "-" when it
@@ -305,15 +306,29 @@ func (m Model) inFlightFigures(t model.Transfer, withETA bool) string {
 	return "  " + strings.Join(parts, m.style("div_line").Render(" · "))
 }
 
+// inFlightSpeed renders one file's own rate, or the dash that means the record
+// did not measure one.
+func (m Model) inFlightSpeed(t model.Transfer) string {
+	if t.Speed < 0 {
+		return m.style("inactive_fg").Render("-")
+	}
+	return m.magnitudeStyle("upload", t.Speed/m.rateScale()).
+		Render(Rate(t.Speed, m.opts.Base10))
+}
+
 // transferDone renders how far through one file rclone has got.
 //
 // The percentage is a measurement and takes the same ramp as the run's own
 // completion on the line above, so a file and the job holding it are read the
-// same way. The size beside it is what makes the percentage mean anything:
-// 82% of 30 MiB and 82% of 30 GiB are different news.
+// same way; a record that carried none gets the dash, because a zero would read
+// as "not begun". The size beside it is what makes the percentage mean
+// anything: 82% of 30 MiB and 82% of 30 GiB are different news.
 func (m Model) transferDone(t model.Transfer) string {
-	done := m.magnitudeStyle("cpu", float64(t.Percentage)/100).
-		Render(fmt.Sprintf("%d%%", t.Percentage))
+	done := m.style("inactive_fg").Render("-")
+	if t.Percentage >= 0 {
+		done = m.magnitudeStyle("cpu", float64(t.Percentage)/100).
+			Render(fmt.Sprintf("%d%%", t.Percentage))
+	}
 	if t.Size < 0 {
 		// rclone could not size the source before it started. Zero would say
 		// the file is empty and a bare percentage would be a fraction of

@@ -140,9 +140,9 @@ func TestRCMeasuredEmptyTransferringIsNotNil(t *testing.T) {
 }
 
 // A transfer record can arrive with fields missing -- an older daemon, or a
-// response the endpoint populated only in part. An absent byte count or size
-// must stay unknown: zero would claim the file is empty and fully moved, which
-// is the opposite of what a daemon that did not report them is saying. A
+// response the endpoint populated only in part. Every absent measurement must
+// stay unknown: a zero would claim an empty file that has not started moving,
+// which is the opposite of what a daemon that did not report them is saying. A
 // negative eta is rclone declining to estimate, the same as a missing one.
 func TestRCPreservesUnknownTransferringFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -151,7 +151,7 @@ func TestRCPreservesUnknownTransferringFields(t *testing.T) {
 			_, _ = w.Write([]byte(`{"jobids":[]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"transferring":[{"name":"partial.bin","percentage":40,"speed":9.0},{"name":"stalled.bin","percentage":10,"size":100,"eta":-1}]}`))
+		_, _ = w.Write([]byte(`{"transferring":[{"name":"bare.bin"},{"name":"stalled.bin","percentage":10,"size":100,"eta":-1}]}`))
 	}))
 	defer server.Close()
 
@@ -167,8 +167,8 @@ func TestRCPreservesUnknownTransferringFields(t *testing.T) {
 
 	got := snap.RCStats[0].Transferring
 	want := []model.Transfer{
-		{Name: "partial.bin", Percentage: 40, Speed: 9.0, Size: model.UnknownSize},
-		{Name: "stalled.bin", Percentage: 10, Size: 100},
+		{Name: "bare.bin", Percentage: model.UnknownPercentage, Size: model.UnknownSize, Speed: model.UnknownSpeed},
+		{Name: "stalled.bin", Percentage: 10, Size: 100, Speed: model.UnknownSpeed},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("transferring = %+v, want %+v", got, want)
