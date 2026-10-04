@@ -33,10 +33,11 @@ func (m Model) jobProgress(job model.Job) string {
 	if !job.HaveStats {
 		return warning
 	}
+	prefix := ""
 	if job.Stats.Source == model.SourceRC {
-		return warning + m.statsProgress(job.Stats, "RC ")
+		prefix = "RC "
 	}
-	return warning + m.statsProgress(job.Stats, "")
+	return warning + m.statsProgress(job.Stats, prefix)
 }
 
 // rcProgress renders asynchronous daemon jobs. Core statistics are merged into

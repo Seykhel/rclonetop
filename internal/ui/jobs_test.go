@@ -88,7 +88,7 @@ func TestRCProgressIsShownAlongsideTheProcess(t *testing.T) {
 
 func TestUnreadableLogDoesNotHideRCProgress(t *testing.T) {
 	proc := model.Process{PID: 42, RCAddr: "rc:1"}
-	m := modelWithJobs([]model.Process{proc}, []model.Job{{PID: 42, ReadError: "permission denied"}}, time.Now())
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{PID: 42, ReadError: "permission denied"}}, time.Unix(1787433722, 0))
 	m.state.Seen[model.SourceProc] = m.now
 	m.state.RCStats = []model.RCStats{{Addr: proc.RCAddr, Stats: model.JobStats{
 		Bytes: 100, TotalBytes: 200, Known: model.StatsBytes | model.StatsTotalBytes, Source: model.SourceRC,
