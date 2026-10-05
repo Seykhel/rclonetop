@@ -86,6 +86,24 @@ func TestRCProgressIsShownAlongsideTheProcess(t *testing.T) {
 	}
 }
 
+func TestUnreadableLogDoesNotHideRCProgress(t *testing.T) {
+	proc := model.Process{PID: 42, RCAddr: "rc:1"}
+	m := modelWithJobs([]model.Process{proc}, []model.Job{{PID: 42, ReadError: "permission denied"}}, time.Unix(1787433722, 0))
+	m.state.Seen[model.SourceProc] = m.now
+	m.state.RCStats = []model.RCStats{{Addr: proc.RCAddr, Stats: model.JobStats{
+		Bytes: 100, TotalBytes: 200, Known: model.StatsBytes | model.StatsTotalBytes, Source: model.SourceRC,
+	}}}
+	for _, preset := range []int{0, 1} {
+		m.preset, m.width, m.height = preset, 160, 50
+		got := stripStyles(m.View())
+		for _, want := range []string{"log unreadable: permission denied", "100 B", "200 B", "50%"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("preset %d missing %q in:\n%s", preset, want, got)
+			}
+		}
+	}
+}
+
 // The daemon's own details sit under the process line, alongside the accounting
 // for its run: which rclone it is, what it is caching and any limit it was
 // given.

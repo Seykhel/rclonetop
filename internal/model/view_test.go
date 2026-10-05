@@ -69,6 +69,24 @@ func TestResolveUsesRCZeroAsAMeasurement(t *testing.T) {
 	}
 }
 
+func TestResolveDoesNotChangeStoredMeasurementSources(t *testing.T) {
+	s := NewState()
+	s.Apply(Snapshot{Source: SourceProc, Processes: []Process{{PID: 42, RCAddr: "rc:1"}}})
+	s.Apply(Snapshot{Source: SourceLog, Jobs: []Job{{PID: 42, HaveStats: true, Stats: JobStats{
+		Bytes: 10, Known: StatsBytes, Source: SourceLog,
+		Sources: map[StatsFields]Source{StatsBytes: SourceLog},
+	}}}})
+	s.Apply(Snapshot{Source: SourceRC, RCStats: []RCStats{{Addr: "rc:1", Stats: JobStats{
+		Bytes: 20, Known: StatsBytes, Source: SourceRC,
+	}}}})
+	first := s.Resolve().Procs[0].Job.Stats
+	s.Apply(Snapshot{Source: SourceRC, RCStats: []RCStats{}})
+	fallback := s.Resolve().Procs[0].Job.Stats
+	if first.Sources[StatsBytes] != SourceRC || fallback.Sources[StatsBytes] != SourceLog {
+		t.Fatalf("resolved sources changed across frames: first=%v fallback=%v", first.Sources, fallback.Sources)
+	}
+}
+
 // A mount has no log to speak of -- nothing tells rclone to write one -- so
 // RC is the only source that can ever say which files are moving. This is
 // what the mount in quadrant 3 needed once rc.go started decoding
@@ -137,6 +155,30 @@ func TestRCFailureDoesNotEraseLastValidLocalMeasurement(t *testing.T) {
 	}
 	if row.RCStats != nil {
 		t.Fatalf("failed RC source produced statistics: %+v", row.RCStats)
+	}
+}
+
+func TestSourceFailuresKeepExactMeasurementsAndLocalFallbacks(t *testing.T) {
+	for _, failed := range []Source{SourceRC, SourceLog, SourceProc} {
+		t.Run(string(failed), func(t *testing.T) {
+			s := NewState()
+			s.Apply(Snapshot{Source: SourceProc, Processes: []Process{{PID: 42, RCAddr: "rc:1", ReadRate: 15, IOAvailable: true}}})
+			s.Apply(Snapshot{Source: SourceLog, Jobs: []Job{{PID: 42, HaveStats: true, Stats: JobStats{
+				Bytes: 10, TotalBytes: 200, Known: StatsBytes | StatsTotalBytes, Source: SourceLog,
+			}}}})
+			s.Apply(Snapshot{Source: SourceRC, RCStats: []RCStats{{Addr: "rc:1", Stats: JobStats{
+				Bytes: 100, Known: StatsBytes, Source: SourceRC,
+			}}}})
+			s.Fail(failed, context.Canceled)
+			view := s.Resolve()
+			stats := view.Procs[0].Job.Stats
+			if stats.Bytes != 100 || stats.TotalBytes != 200 || stats.Sources[StatsBytes] != SourceRC || stats.Sources[StatsTotalBytes] != SourceLog {
+				t.Fatalf("failure lost measurements or provenance: %+v", stats)
+			}
+			if view.Errors[failed] != context.Canceled || view.Procs[0].Process.ReadRate != 15 {
+				t.Fatalf("failure lost source status or process observation: %+v", view)
+			}
+		})
 	}
 }
 

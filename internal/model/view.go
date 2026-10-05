@@ -1,6 +1,7 @@
 package model
 
 import (
+	"maps"
 	"sort"
 	"time"
 )
@@ -158,6 +159,9 @@ func (s *State) procRows() []ProcRow {
 // observation intact rather than turn it into a misleading zero.
 func mergeStats(local, exact JobStats, localKnown bool) JobStats {
 	merged := local
+	// The struct copy still shares the map with State.Jobs. Merging must not
+	// rewrite the local sources a later frame needs when RC is absent.
+	merged.Sources = maps.Clone(local.Sources)
 	if merged.Source == "" {
 		merged.Source = SourceLog
 	}

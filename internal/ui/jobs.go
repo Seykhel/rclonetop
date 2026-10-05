@@ -21,21 +21,32 @@ import (
 // branch below and renders nothing -- the same answer as before, without a
 // second way of spelling "there is nothing to say".
 func (m Model) jobProgress(job model.Job) string {
+	var warning string
 	if job.ReadError != "" {
 		// The same distinction the throughput line makes for an unreadable
 		// /proc/<pid>/io: a job that stands still because nobody can read its
 		// log looks exactly like one with nothing to do, and saying which is
 		// the whole point.
-		return "  " + m.style("inactive_fg").Render("log unreadable: ") +
+		warning = "  " + m.style("inactive_fg").Render("log unreadable: ") +
 			m.style("hi_fg").Render(oneLine(job.ReadError)) + "\n"
 	}
 	if !job.HaveStats {
-		return ""
+		return warning
 	}
+	// The label follows the aggregate Source, which mergeStats deliberately
+	// leaves as the local source once any local statistics exist. A line can
+	// therefore carry exact RC fields and still read as local. The per-field
+	// provenance in Stats.Sources is recorded for that case but no renderer
+	// draws it: there is no single honest label for a line mixing measured and
+	// inferred figures, and switching it to the RC layout would drop the fields
+	// only the log supplied -- "checked", for one. So a mixed line stays worded
+	// as the local account it is primarily, and Sources remains the model's
+	// answer for any future consumer that wants the fields apart.
+	prefix := ""
 	if job.Stats.Source == model.SourceRC {
-		return m.statsProgress(job.Stats, "RC ")
+		prefix = "RC "
 	}
-	return m.statsProgress(job.Stats, "")
+	return warning + m.statsProgress(job.Stats, prefix)
 }
 
 // rcProgress renders asynchronous daemon jobs. Core statistics are merged into
