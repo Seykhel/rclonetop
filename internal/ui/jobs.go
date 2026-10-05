@@ -33,6 +33,15 @@ func (m Model) jobProgress(job model.Job) string {
 	if !job.HaveStats {
 		return warning
 	}
+	// The label follows the aggregate Source, which mergeStats deliberately
+	// leaves as the local source once any local statistics exist. A line can
+	// therefore carry exact RC fields and still read as local. The per-field
+	// provenance in Stats.Sources is recorded for that case but no renderer
+	// draws it: there is no single honest label for a line mixing measured and
+	// inferred figures, and switching it to the RC layout would drop the fields
+	// only the log supplied -- "checked", for one. So a mixed line stays worded
+	// as the local account it is primarily, and Sources remains the model's
+	// answer for any future consumer that wants the fields apart.
 	prefix := ""
 	if job.Stats.Source == model.SourceRC {
 		prefix = "RC "
