@@ -65,6 +65,9 @@ type Model struct {
 	shownByPreset    [10]panelSet
 	framedPreset     int
 
+	helpOpen   bool
+	helpOffset int
+
 	// peakRate is the largest throughput seen so far, used as the upper
 	// bound when grading a rate along the gradient. It auto-scales like
 	// btop's net_auto rather than assuming a link speed rclonetop cannot
@@ -162,7 +165,11 @@ func tick(ms int) tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		entry := m.helpEntryAtTop()
 		m.width, m.height = msg.Width, msg.Height
+		if m.helpOpen {
+			m.restoreHelpEntry(entry)
+		}
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 		return m, nil
 
@@ -198,6 +205,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "?" || msg.String() == "h" {
+		m.helpOpen = !m.helpOpen
+		m.helpOffset = 0
+		return m, nil
+	}
+	if m.helpOpen && msg.String() == "esc" {
+		m.helpOpen = false
+		return m, nil
+	}
+	if m.helpOpen && msg.String() != "q" && msg.String() != "ctrl+c" {
+		m.scrollHelp(msg.String())
+		return m, nil
+	}
 	switch msg.String() {
 	case "q", "ctrl+c", "esc":
 		m.quitting = true
@@ -318,6 +338,13 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	if m.helpOpen {
+		return m.renderHelp()
+	}
+	return m.monitorView()
+}
+
+func (m Model) monitorView() string {
 	if m.preset > 0 {
 		// Which may still hand back the dense view: a terminal with no
 		// room for frames gets the one that fits, and the preset is left
