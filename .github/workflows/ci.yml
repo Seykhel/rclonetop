@@ -74,11 +74,15 @@ jobs:
       - name: Configuration example
         run: bash scripts/check-config-example.sh
 
-      - name: Check GoReleaser configuration
+      - name: Install GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           version: v2.18.2
-          args: check
+          # Only install-only exports the binary directory to subsequent steps.
+          install-only: true
+
+      - name: Check GoReleaser configuration
+        run: goreleaser check
 
       # Snapshot mode builds and archives without publishing or needing a
       # release token. Checking the extracted deliverables catches omissions
