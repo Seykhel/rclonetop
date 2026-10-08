@@ -97,14 +97,35 @@ func TestHelpListsEveryCommandInACenteredFrame(t *testing.T) {
 			m := helpSize(New(nil, Options{Preset: preset, GraphSymbol: symbol, Host: "visible-host"}, nil), 120, 40)
 			m, _ = helpKey(m, "?")
 			view := stripStyles(m.View())
+			if strings.Count(view, "Keyboard help") != 1 {
+				t.Fatalf("help should have one title, not a repeated heading:\n%s", view)
+			}
 			for _, text := range []string{
-				"Keyboard help", "? / h", "Esc", "Up / Down", "PgUp / PgDn",
-				"p", "P", "1", "2", "3", "4", "+ / =", "- / _", "q / Ctrl+C",
-				"transfers", "bandwidth", "files", "status", "framed", "close",
-				"visible-host",
+				"Keyboard help", "Framed panels", "visible-host",
 			} {
 				if !strings.Contains(view, text) {
 					t.Fatalf("missing %q in help:\n%s", text, view)
+				}
+			}
+			// Match keys together with their action, rather than finding a
+			// single digit or letter somewhere in the reference/background.
+			words := strings.Join(strings.Fields(view), " ")
+			for _, command := range []string{
+				"? / h Open or close help",
+				"Esc Close help; outside help, quit",
+				"Up Scroll help up by one line",
+				"Down Scroll help down by one line",
+				"PgUp Scroll help up by one page",
+				"PgDn Scroll help down by one page",
+				"p Alternate dense and remembered framed view",
+				"P Cycle configured framed presets (enter framed from dense)",
+				"1 Toggle transfers", "2 Toggle bandwidth", "3 Toggle files", "4 Toggle status",
+				"+ / = Refresh faster (halve interval, minimum 100ms)",
+				"- / _ Refresh slower (double interval, maximum 30000ms)",
+				"q / Ctrl+C Quit, including while help is open",
+			} {
+				if !strings.Contains(words, command) {
+					t.Fatalf("missing command %q in help:\n%s", command, view)
 				}
 			}
 			lines := strings.Split(view, "\n")
@@ -119,7 +140,7 @@ func TestHelpListsEveryCommandInACenteredFrame(t *testing.T) {
 				}
 			}
 			if symbol == graph.TTY {
-				if !strings.Contains(view, "[Keyboard help]") || strings.ContainsAny(view, "╭╮╰╯│") && preset == 0 {
+				if !strings.Contains(view, "[Keyboard help]") || strings.ContainsAny(view, "╭╮╰╯│") {
 					t.Fatal("console help should use an ASCII frame")
 				}
 			} else if left < 1 || absHelp(left-(120-left-right)) > 1 || absHelp(top-(40-bottom-1)) > 1 {
@@ -157,7 +178,7 @@ func TestHelpScrollsByLineAndPageAndRestartsOnReopening(t *testing.T) {
 		t.Fatal("Up should return to the initial line")
 	}
 	m, _ = helpKey(m, "pgdown")
-	if first := strings.TrimSpace(strings.Split(stripStyles(m.View()), "\n")[0]); !strings.HasPrefix(first, "PgUp / PgDn") {
+	if first := strings.TrimSpace(strings.Split(stripStyles(m.View()), "\n")[0]); !strings.HasPrefix(first, "Down ") {
 		t.Fatalf("Page Down should advance the five visible content rows, got %q", first)
 	}
 	for i := 0; i < 30; i++ {
@@ -182,7 +203,7 @@ func TestHelpScrollsByLineAndPageAndRestartsOnReopening(t *testing.T) {
 func TestHelpResizeKeepsTheCommandBeingRead(t *testing.T) {
 	m := helpSize(New(nil, Options{}, nil), 80, 5)
 	m, _ = helpKey(m, "?")
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 40 && !strings.HasPrefix(strings.TrimSpace(strings.Split(stripStyles(m.View()), "\n")[0]), "P "); i++ {
 		m, _ = helpKey(m, "down")
 	}
 	if first := strings.TrimSpace(strings.Split(stripStyles(m.View()), "\n")[0]); !strings.HasPrefix(first, "P ") {
@@ -204,8 +225,8 @@ func TestHelpResizeKeepsTheCommandBeingRead(t *testing.T) {
 		t.Fatal("growing should restore the complete framed reference")
 	}
 	m = helpSize(m, 80, 5)
-	if !strings.Contains(stripStyles(m.View()), "Keyboard help") {
-		t.Fatal("shrinking the complete reference should start at the beginning")
+	if first := strings.TrimSpace(strings.Split(stripStyles(m.View()), "\n")[0]); !strings.HasPrefix(first, "P ") {
+		t.Fatalf("shrinking the overlay should restore the command being read: %q", first)
 	}
 }
 
@@ -232,7 +253,7 @@ func TestMonitorFooterKeepsWholeHintsInPriorityOrder(t *testing.T) {
 		m := helpSize(New(nil, Options{Preset: preset}, nil), 180, 40)
 		lines := strings.Split(stripStyles(m.View()), "\n")
 		footer := lines[len(lines)-1]
-		for _, hint := range []string{"? help", "q quit", "p view", "2000ms", "sources "} {
+		for _, hint := range []string{"? help", "q quit", "p view", "P next", "2000ms", "sources "} {
 			if !strings.Contains(footer, hint) {
 				t.Errorf("wide footer should contain %q: %s", hint, footer)
 			}
@@ -305,6 +326,9 @@ func TestHelpFitsSmallTerminalsAndKeepsACloseHint(t *testing.T) {
 				}
 				if width >= 3 && !strings.Contains(strings.ToLower(stripStyles(m.View())), "esc") {
 					t.Fatalf("size %v key %q: close hint disappeared", size, key)
+				}
+				if width < 3 && strings.TrimSpace(lines[len(lines)-1]) != "?" {
+					t.Fatalf("size %v: show a complete close key rather than a fragment: %q", size, lines[len(lines)-1])
 				}
 			}
 			m, cmd := helpKey(m, "esc")

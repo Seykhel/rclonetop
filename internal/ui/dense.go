@@ -196,7 +196,7 @@ func (m Model) denseCaches(caches []model.CacheDir) string {
 // denseHeader is the title line: name, host and clock, separated by a rule that
 // fills the terminal width.
 func (m Model) denseHeader(width int) string {
-	left := m.style("title").Bold(true).Render("rclonetop") + " " +
+	left := m.title().Render("rclonetop") + " " +
 		m.style("inactive_fg").Render(Version)
 	if m.opts.Host != "" {
 		left += " " + m.style("hi_fg").Render(m.opts.Host)
@@ -357,7 +357,7 @@ func (m Model) memStyle(rss uint64) lipgloss.Style {
 // denseFooter summarises which collectors are alive, so an empty screen can
 // always be explained.
 func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Source]error, width int) string {
-	rule := m.style("div_line").Render(strings.Repeat(string(m.boxRunes().Horizontal), max(width, 1)))
+	rule := m.style("div_line").Render(strings.Repeat("─", max(width, 1)))
 
 	var parts []string
 	sources := make([]string, 0, len(seen))
@@ -378,9 +378,14 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 	// Select whole elements in priority order before rendering. Clamping a
 	// sources-first line used to remove the actionable hints on narrow hosts,
 	// precisely where discovering the help is most useful.
+	// Hints use label(), not inactive_fg: they are always actionable chrome,
+	// rather than inert or stale data. Naming p here makes its action
+	// discoverable; an undisclosed key is as hard to use as an ignored flag.
 	elements := []string{m.label().Render("? help"), m.label().Render("q quit"), m.label().Render("p view")}
 	if m.preset > 0 {
 		elements = append(elements, m.label().Render(fmt.Sprintf("preset %d  P next", m.preset)))
+	} else {
+		elements = append(elements, m.label().Render("P next"))
 	}
 	elements = append(elements,
 		m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)),

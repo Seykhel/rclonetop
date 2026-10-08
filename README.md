@@ -33,7 +33,7 @@ UNIT   rclone-mount  running
 CACHE  vfs 47 MiB (326 files) · vfsMeta 1.6 MiB (404 files) · scanned 2s ago
 
 ────────────────────────────────────────────────────────────────────────────────
-sources bisync · localfs · proc · systemd                   700ms  q quit
+? help  q quit  p view  P next  700ms  sources bisync · localfs · proc · systemd
 ```
 
 ## Why another rclone TUI

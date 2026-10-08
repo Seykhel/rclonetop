@@ -9,36 +9,8 @@ import (
 	"github.com/Seykhel/rclonetop/internal/ui/box"
 )
 
-// Help entries have stable identities across wrapping. A resize can then keep
-// the command being read on screen rather than retaining a row number that now
-// belongs to a different command.
-type helpEntry struct {
-	text    string
-	heading bool
-}
-
-var helpEntries = []helpEntry{
-	{"Keyboard help", true},
-	{"Help", true},
-	{"? / h          Open or close help", false},
-	{"Esc            Close help; outside help, quit", false},
-	{"Up / Down      Scroll help by one line", false},
-	{"PgUp / PgDn    Scroll help by one page", false},
-	{"Views", true},
-	{"p              Alternate dense and remembered framed view", false},
-	{"P              Cycle configured framed presets (enter framed from dense)", false},
-	{"Framed panels (session only)", true},
-	{"1              Toggle transfers", false},
-	{"2              Toggle bandwidth", false},
-	{"3              Toggle files", false},
-	{"4              Toggle status", false},
-	{"Refresh (screen only; collector cadence stays the same)", true},
-	{"+ / =          Refresh faster (halve interval, minimum 100ms)", false},
-	{"- / _          Refresh slower (double interval, maximum 30000ms)", false},
-	{"Quit", true},
-	{"q / Ctrl+C     Quit, including while help is open", false},
-}
-
+// Rows carry the identity of their group or command through wrapping.
+// Both rendering and dispatch use keyBindings; help is not a second keymap.
 type helpLine struct {
 	text  string
 	entry int
@@ -46,24 +18,30 @@ type helpLine struct {
 
 func (m Model) helpLines(width int) []helpLine {
 	var lines []helpLine
-	for i, entry := range helpEntries {
-		style := m.value()
-		if entry.heading {
-			style = m.style("title").Bold(true)
+	entry, group := -1, ""
+	appendEntry := func(text string, style lipgloss.Style) {
+		entry++
+		for _, line := range strings.Split(ansi.Wrap(text, width, ""), "\n") {
+			lines = append(lines, helpLine{style.Render(line), entry})
 		}
-		for _, text := range strings.Split(ansi.Wrap(entry.text, width, ""), "\n") {
-			lines = append(lines, helpLine{style.Render(text), i})
+	}
+	appendEntry("Keyboard help", m.title())
+	for _, binding := range keyBindings() {
+		if binding.group != group {
+			group = binding.group
+			appendEntry(group, m.title())
 		}
+		appendEntry(binding.helpText(), m.value())
 	}
 	return lines
 }
 
 func helpWidth() int {
-	width := 0
-	for _, entry := range helpEntries {
-		width = max(width, lipgloss.Width(entry.text))
+	width := max(lipgloss.Width("Keyboard help"), lipgloss.Width(helpHint))
+	for _, binding := range keyBindings() {
+		width = max(width, max(lipgloss.Width(binding.group), lipgloss.Width(binding.helpText())))
 	}
-	return max(width, lipgloss.Width(helpHint))
+	return width
 }
 
 const helpHint = "Esc / ? / h close  |  Up/Down PgUp/PgDn scroll"
@@ -74,7 +52,7 @@ func (m Model) helpFooter(width int) string {
 			return m.label().Render(hint)
 		}
 	}
-	return m.label().Render(ansi.Truncate("Esc", width, ""))
+	return m.label().Render("?")
 }
 
 // The complete, unwrapped reference earns a frame only when it fits. Width
@@ -82,34 +60,30 @@ func (m Model) helpFooter(width int) string {
 // threshold silently too small for the help it is supposed to hold.
 func (m Model) helpFits() bool {
 	return helpWidth()+2 <= effectiveWidth(m.width) &&
-		len(m.helpLines(helpWidth()))+3 <= effectiveHeight(m.height)
+		len(m.helpLines(helpWidth()))+2 <= effectiveHeight(m.height)
 }
 
-func (m *Model) scrollHelp(key string) {
+func (m *Model) scrollHelp(action keyAction) {
 	if m.helpFits() {
 		m.helpOffset = 0
 		return
 	}
 	rows := max(effectiveHeight(m.height)-1, 0)
-	switch key {
-	case "up":
+	switch action {
+	case actionScrollUp:
 		m.helpOffset--
-	case "down":
+	case actionScrollDown:
 		m.helpOffset++
-	case "pgup":
+	case actionPageUp:
 		m.helpOffset -= max(rows, 1)
-	case "pgdown":
+	case actionPageDown:
 		m.helpOffset += max(rows, 1)
-	}
-	m.helpOffset = min(max(m.helpOffset, 0), max(len(m.helpLines(effectiveWidth(m.width)))-rows, 0))
-}
-
-func (m Model) helpEntryAtTop() int {
-	if !m.helpOpen || m.helpFits() {
-		return 0
+	default:
+		return
 	}
 	lines := m.helpLines(effectiveWidth(m.width))
-	return lines[min(m.helpOffset, len(lines)-1)].entry
+	m.helpOffset = min(max(m.helpOffset, 0), max(len(lines)-rows, 0))
+	m.helpAnchor = lines[min(m.helpOffset, len(lines)-1)].entry
 }
 
 func (m *Model) restoreHelpEntry(entry int) {
@@ -122,7 +96,8 @@ func (m *Model) restoreHelpEntry(entry int) {
 			}
 		}
 	}
-	m.scrollHelp("")
+	rows := max(effectiveHeight(m.height)-1, 0)
+	m.helpOffset = min(m.helpOffset, max(len(m.helpLines(effectiveWidth(m.width)))-rows, 0))
 }
 
 func (m Model) renderHelp() string {
@@ -144,22 +119,16 @@ func (m Model) renderHelp() string {
 	width, height := effectiveWidth(m.width), effectiveHeight(m.height)
 	inner := helpWidth()
 	body := m.helpLines(inner)
+	// The frame already carries the title. Full-screen help needs the title
+	// as a content row, but drawing that row inside the frame repeats it.
+	body = body[1:]
 	frame := box.Box{Width: inner + 2, Height: len(body) + 3, Runes: m.boxRunes()}
-	border := m.style("div_line")
-	var top strings.Builder
-	for _, seg := range frame.Top("Keyboard help", box.NoHotkey) {
-		style := border
-		if seg.Kind == box.KindTitle {
-			style = m.style("title").Bold(true)
-		}
-		top.WriteString(style.Render(seg.Text))
-	}
-	panel := []string{top.String()}
-	side := border.Render(string(frame.Runes.Vertical))
+	content := make([]string, 0, len(body)+1)
 	for _, line := range body {
-		panel = append(panel, side+fitCell(line.text, inner)+side)
+		content = append(content, line.text)
 	}
-	panel = append(panel, side+fitCell(m.helpFooter(inner), inner)+side, border.Render(frame.Bottom()))
+	content = append(content, m.helpFooter(inner))
+	panel := m.frameRows(frame, "Keyboard help", box.NoHotkey, m.style("div_line"), content)
 
 	// Slice the monitor in terminal cells, preserving its styles on either
 	// side. Dense content can exceed the screen's height; only the visible
