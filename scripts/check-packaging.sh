@@ -5,7 +5,12 @@ export LC_ALL=C
 # Observe the deliverables, not GoReleaser's build configuration. In particular,
 # an accidentally archived demo binary or missing attribution must fail here.
 dist_dir=$(realpath "${1:-dist}")
-version=$(jq -er '.version | select(type == "string" and length > 0)' "$dist_dir/metadata.json")
+# Draft downloads contain published assets, not GoReleaser's local metadata.
+# Their expected version comes from the triggering tag instead.
+version=${2:-}
+if [[ -z "$version" ]]; then
+  version=$(jq -er '.version | select(type == "string" and length > 0)' "$dist_dir/metadata.json")
+fi
 shopt -s nullglob
 archives=("$dist_dir"/*.tar.gz)
 [[ ${#archives[@]} -eq 2 ]] || { echo "Expected exactly two Linux archives" >&2; exit 1; }

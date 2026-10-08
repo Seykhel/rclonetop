@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# Never interrupt preparation or verification of a draft with another run.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Check source
+        run: |
+          test -z "$(gofmt -l .)"
+          go build ./...
+          go vet ./...
+          go test -race -count=1 ./...
+          bash scripts/check-config-example.sh
+      - name: Prepare draft
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke:
+    needs: draft
+    # Draft visibility requires push access, even though these steps only read.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine: x86_64
+          - runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Download the draft's actual assets. A local rebuild would only prove
+      # that the source builds, not that the release downloads work.
+      - name: Download draft archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release download "$RELEASE_TAG" --pattern '*.tar.gz' --pattern checksums.txt --dir dist
+      - name: Verify archives and native executable
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_MACHINE"
+          bash scripts/check-packaging.sh dist "${RELEASE_TAG#v}"
+
+  ready:
+    needs: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record automatic verification
+        run: |
+          echo 'Both native archive smoke tests passed. The release remains a draft; asset review and an interactive Linux amd64 check are required before manual publication.' >> "$GITHUB_STEP_SUMMARY"
