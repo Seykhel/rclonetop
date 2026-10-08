@@ -35,7 +35,6 @@ checksum:
   name_template: checksums.txt
   algorithm: sha256
 
-# Publishing is introduced by #50; even a manual release command prepares a
-# draft for review rather than publishing the first release without it.
+# The tag workflow and manual commands both prepare a draft for review.
 release:
   draft: true
