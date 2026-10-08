@@ -7,34 +7,10 @@ It shows what rclone is doing on this host — running mounts and transfers,
 throughput, synchronised files, space used — and it works whether or not rclone
 was started in any particular way.
 
-```
-rclonetop 0.1.0 workstation ─────────────────────────────────── 21:15:40
+![rclonetop simulated demo: transfer progress, framed graphs and a successful job](docs/demo/demo.gif)
 
-MOUNT  gdrive: → ~/My Drive
-  pid 2702 · up 11h43m · rss 75 MiB · thr 15
-  ↓ 1.4 MiB/s   ⠀⠀⠀⠀⠀⢀⣠⣴⣾  ↑ 0 B/s       ⠀⠀⠀⠀⠀⠀⠀⠀⠀  ·  rd 130 MiB · wr 132 MiB
-
-BISYNC ~/Documents → gdrive:Documents
-  pid 193345 · up 4m36s · rss 85 MiB · thr 13
-  ↓ 82 KiB/s    ⠀⠀⠀⢠⣾⣷⣶⣤⣀  ↑ 12 KiB/s    ⠀⠀⠀⠀⠀⢀⣠⣴⣾  ·  rd 3.5 MiB · wr 2.9 MiB
-  58% · 2.9 GiB / 4.9 GiB · 1158/4667 files · ETA 2m51s
-
-SYNC   ~/Documents ⇄ gdrive:Documents
-  4710 files 5.0 GiB  ⇄  4710 files 5.0 GiB
-  in sync · listed 21m46s ago · last failure 4h51m ago
-
-UNIT   jd-bisync  idle
-  last 2m0s ago · next in 28m0s
-  ! 5h1m ago  jd-bisync.service: Main process exited, code=killed, status=15…
-    and 3 more recent
-UNIT   rclone-mount  running
-  running for 11h43m
-
-CACHE  vfs 47 MiB (326 files) · vfsMeta 1.6 MiB (404 files) · scanned 2s ago
-
-────────────────────────────────────────────────────────────────────────────────
-? help  q quit  p view  P next  700ms  sources bisync · localfs · proc · systemd
-```
+The recording uses **simulated data** and the real UI, switching between dense
+and framed views. [Recording instructions](docs/demo/README.md).
 
 ## Why another rclone TUI
 
