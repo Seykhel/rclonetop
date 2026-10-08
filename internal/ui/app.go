@@ -8,6 +8,7 @@ package ui
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,6 +65,12 @@ type Model struct {
 	availablePresets [10]bool
 	shownByPreset    [10]panelSet
 	framedPreset     int
+
+	helpOpen   bool
+	helpOffset int
+	// helpAnchor remembers the command being read even while the complete
+	// reference fits: widening should not forget where shrinking returns to.
+	helpAnchor int
 
 	// peakRate is the largest throughput seen so far, used as the upper
 	// bound when grading a rate along the gradient. It auto-scales like
@@ -163,6 +170,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.helpOpen {
+			m.restoreHelpEntry(m.helpAnchor)
+		}
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 		return m, nil
 
@@ -198,14 +208,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c", "esc":
+	binding, ok := bindingForKey(msg.String())
+	if !ok {
+		return m, nil
+	}
+	if binding.action == actionHelp {
+		m.helpOpen = !m.helpOpen
+		m.helpOffset = 0
+		m.helpAnchor = 0
+		return m, nil
+	}
+	if m.helpOpen && binding.action == actionEscape {
+		m.helpOpen = false
+		return m, nil
+	}
+	if m.helpOpen && binding.action != actionQuit {
+		m.scrollHelp(binding.action)
+		return m, nil
+	}
+	switch binding.action {
+	case actionQuit, actionEscape:
 		m.quitting = true
 		if m.cancel != nil {
 			m.cancel()
 		}
 		return m, tea.Quit
-	case "p":
+	case actionView:
 		// Alternates rather than counts up: with two presets those are
 		// the same thing, and a counter would need a modulus that means
 		// nothing until there is a third.
@@ -220,7 +248,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// one the user just left draws the other blank down its right
 		// half, or throws away history it was about to need.
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
-	case "P":
+	case actionNextPreset:
 		if m.preset == 0 {
 			m.framedPreset = 0
 		}
@@ -228,7 +256,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.preset = m.framedPreset
 		m.shown = m.shownByPreset[m.framedPreset]
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
-	case "1", "2", "3", "4":
+	case actionPanel:
 		// A box's digit is fixed to its kind, not to wherever it currently
 		// sits, so it means the same thing whether or not this key press
 		// reaches a screen with that box on it right now. There is no box
@@ -236,7 +264,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.preset == 0 {
 			return m, nil
 		}
-		if k, ok := panelForHotkey(int(msg.String()[0] - '0')); ok {
+		digit, _ := strconv.Atoi(msg.String())
+		if k, ok := panelForHotkey(digit); ok {
 			m.shown[k] = !m.shown[k]
 			m.shownByPreset[m.framedPreset] = m.shown
 			// Hiding or showing a panel changes what graphCells reports
@@ -244,9 +273,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// window resize both already call this.
 			m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 		}
-	case "+", "=":
+	case actionFaster:
 		m.opts.UpdateMS = clampInterval(m.opts.UpdateMS / 2)
-	case "-", "_":
+	case actionSlower:
 		m.opts.UpdateMS = clampInterval(m.opts.UpdateMS * 2)
 	}
 	return m, nil
@@ -318,6 +347,13 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	if m.helpOpen {
+		return m.renderHelp()
+	}
+	return m.monitorView()
+}
+
+func (m Model) monitorView() string {
 	if m.preset > 0 {
 		// Which may still hand back the dense view: a terminal with no
 		// room for frames gets the one that fits, and the preset is left
@@ -331,6 +367,12 @@ func (m Model) View() string {
 // taken from the active theme.
 func (m Model) style(key string) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(m.opts.Theme.Color(key).Lipgloss())
+}
+
+// title carries the heading's weight wherever it is drawn: the monitor
+// header, a frame title, or a help section. A renderer only chooses the text.
+func (m Model) title() lipgloss.Style {
+	return m.style("title").Bold(true)
 }
 
 // gradientStyle grades a value along a named ramp. frac is clamped by the

@@ -123,42 +123,9 @@ func (m Model) framedBody(plan layout, v model.View) []string {
 func (m Model) framedPanel(p placement, v model.View) []string {
 	spec := panels[p.kind]
 	frame := box.Box{Width: p.w, Height: p.h, Runes: m.boxRunes()}
-	border := m.style(spec.color)
-
-	// Three colours across one row of runes, which is why box.Top hands back
-	// segments rather than a finished string: the border is the panel's own
-	// colour, the name is the theme's title, and the digit that toggles this
-	// panel is hi_fg -- a flat theme key looked up the same way title is,
-	// not one of textAccents' ramp-indexed accents, since there is no ramp
-	// here to index. Plain, not bold: alarm() also reaches for hi_fg, but
-	// bold with it, for something wrong right now: a permanent hotkey
-	// carries neither the weight nor the news, so it stops at the colour.
-	var top strings.Builder
-	for _, seg := range frame.Top(spec.title, spec.hotkey) {
-		switch seg.Kind {
-		case box.KindTitle:
-			top.WriteString(m.style("title").Bold(true).Render(seg.Text))
-		case box.KindHotkey:
-			top.WriteString(m.style("hi_fg").Render(seg.Text))
-		default:
-			top.WriteString(border.Render(seg.Text))
-		}
-	}
-
 	innerW, innerH := p.inner()
 	body := m.panelBody(p.kind, v, innerW, innerH)
-	side := border.Render(string(frame.Runes.Vertical))
-
-	lines := make([]string, 0, p.h)
-	lines = append(lines, top.String())
-	for i := 0; i < innerH; i++ {
-		row := ""
-		if i < len(body) {
-			row = body[i]
-		}
-		lines = append(lines, side+fitCell(row, innerW)+side)
-	}
-	return append(lines, border.Render(frame.Bottom()))
+	return m.frameRows(frame, spec.title, spec.hotkey, m.style(spec.color), body)
 }
 
 // inner is the room inside a placement's frame. One place knows what a frame
@@ -166,17 +133,6 @@ func (m Model) framedPanel(p placement, v model.View) []string {
 // rather than subtracting two and hoping the frame never changes.
 func (p placement) inner() (width, height int) {
 	return box.Box{Width: p.w, Height: p.h}.Inner()
-}
-
-// fitCell cuts a rendered line to the room it has and pads what is left, so a
-// panel is a rectangle whatever is written in it. lipgloss does both without
-// breaking the escape sequences inside.
-func fitCell(s string, width int) string {
-	s = lipgloss.NewStyle().MaxWidth(width).Render(s)
-	if gap := width - lipgloss.Width(s); gap > 0 {
-		s += strings.Repeat(" ", gap)
-	}
-	return s
 }
 
 // panelBody is what goes inside one panel, already cut to the rows available.

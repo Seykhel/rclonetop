@@ -33,7 +33,7 @@ UNIT   rclone-mount  running
 CACHE  vfs 47 MiB (326 files) · vfsMeta 1.6 MiB (404 files) · scanned 2s ago
 
 ────────────────────────────────────────────────────────────────────────────────
-sources bisync · localfs · proc · systemd                   700ms  q quit
+? help  q quit  p view  P next  700ms  sources bisync · localfs · proc · systemd
 ```
 
 ## Why another rclone TUI
@@ -166,11 +166,17 @@ rclonetop [options]
 | `-h`, `--help` | show usage |
 | `-V`, `--version` | show the version |
 
-Keys: `q` or `Esc` to quit, `p` to alternate the dense view and the framed one,
-`P` to cycle through configured framed presets, `+` and `-` to refresh faster
+Keys: `?` or `h` opens keyboard help; `q`, `Ctrl+C` or `Esc` quits the monitor.
+Use `p` to alternate the dense view and the framed one,
+`P` to cycle through configured framed presets, `+`/`=` and `-`/`_` to refresh faster
 or slower, and in the framed view, `1`-`4` to
 hide or show the transfers, bandwidth, files and status panels for the rest
 of the session.
+
+Help appears in a centered frame when it fits, otherwise fills the terminal.
+Use the arrow keys or `PgUp`/`PgDn` to scroll, and `Esc`, `?` or `h` to return
+to the monitor. Data and graphs continue updating while help is open; monitor
+shortcuts take effect after it closes. `q` and `Ctrl+C` still quit from help.
 
 RC credentials are intentionally command-line-only: rclonetop holds them only
 while it runs and never shows them in its diagnostic output or UI. They are sent

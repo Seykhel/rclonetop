@@ -196,7 +196,7 @@ func (m Model) denseCaches(caches []model.CacheDir) string {
 // denseHeader is the title line: name, host and clock, separated by a rule that
 // fills the terminal width.
 func (m Model) denseHeader(width int) string {
-	left := m.style("title").Bold(true).Render("rclonetop") + " " +
+	left := m.title().Render("rclonetop") + " " +
 		m.style("inactive_fg").Render(Version)
 	if m.opts.Host != "" {
 		left += " " + m.style("hi_fg").Render(m.opts.Host)
@@ -375,23 +375,35 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 		parts = append(parts, m.style("inactive_fg").Render("waiting for collectors"))
 	}
 
-	left := m.label().Render("sources ") + strings.Join(parts, m.style("div_line").Render(" · "))
-	// Both hints take label(), not inactive_fg: they are chrome that is
-	// always actionable, which is the distinction inactive_fg is reserved
-	// against. p is named here because a key nobody is told about is the
-	// same lie as a flag that does nothing -- it is just harder to notice.
-	right := m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)) +
-		m.label().Render("  p view")
+	// Select whole elements in priority order before rendering. Clamping a
+	// sources-first line used to remove the actionable hints on narrow hosts,
+	// precisely where discovering the help is most useful.
+	// Hints use label(), not inactive_fg: they are always actionable chrome,
+	// rather than inert or stale data. Naming p here makes its action
+	// discoverable; an undisclosed key is as hard to use as an ignored flag.
+	elements := []string{m.label().Render("? help"), m.label().Render("q quit"), m.label().Render("p view")}
 	if m.preset > 0 {
-		right += m.label().Render(fmt.Sprintf("  preset %d  P next", m.preset))
+		elements = append(elements, m.label().Render(fmt.Sprintf("preset %d  P next", m.preset)))
+	} else {
+		elements = append(elements, m.label().Render("P next"))
 	}
-	right += m.label().Render("  q quit")
-
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+	elements = append(elements,
+		m.label().Render(fmt.Sprintf("%dms", m.opts.UpdateMS)),
+		m.label().Render("sources ")+strings.Join(parts, m.style("div_line").Render(" · ")))
+	var chosen []string
+	used := 0
+	for _, element := range elements {
+		cost := lipgloss.Width(element)
+		if len(chosen) > 0 {
+			cost += 2
+		}
+		if used+cost > width {
+			break
+		}
+		chosen = append(chosen, element)
+		used += cost
 	}
-	return rule + "\n" + left + strings.Repeat(" ", gap) + right
+	return rule + "\n" + fitCell(strings.Join(chosen, "  "), width)
 }
 
 // renderPaths draws the operands of a process, source first, joined by arrows.
