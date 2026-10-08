@@ -1,0 +1,41 @@
+version: 2
+project_name: rclonetop
+
+before:
+  hooks:
+    # Generate from the CLI rather than maintaining a second configuration
+    # template. The committed example uses a fixed version for drift checks;
+    # this copy carries the version of the binary it accompanies.
+    - bash scripts/generate-config.sh {{ .Version }} bin/rclonetop.conf.example
+
+builds:
+  - id: rclonetop
+    main: ./cmd/rclonetop
+    binary: rclonetop
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/Seykhel/rclonetop/internal/ui.Version={{ .Version }}
+
+archives:
+  - ids: [rclonetop]
+    formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files:
+      - README.md
+      - LICENSE
+      - NOTICE
+      - src: bin/rclonetop.conf.example
+        strip_parent: true
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Publishing is introduced by #50; even a manual release command prepares a
+# draft for review rather than publishing the first release without it.
+release:
+  draft: true

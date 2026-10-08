@@ -42,10 +42,11 @@ Because of that it is the one caller that survives a configuration file it canno
 whose conf is broken is exactly the sort that gets reported and the diagnostic must not depend on the
 thing being diagnosed.
 
-`internal/ui.Version` holds the version string; there is no release tooling in the tree yet. CI is
+`internal/ui.Version` holds the version string; GoReleaser stamps it for distribution. For packaging
+changes, configuration-example regeneration or archive verification, read `docs/packaging.md`. CI is
 `.github/workflows/ci.yml`: a single job running gofmt, `go build`, `go vet` and
 `go test -race -count=1`, with the Go version read from `go.mod` so the two cannot drift. It is the
-same four commands as above, which is the point — a change that passes locally passes there.
+same four commands as above, followed by configuration-example and snapshot-packaging checks.
 `/bin` and `/dist` are gitignored.
 
 ## Changes go through a pull request

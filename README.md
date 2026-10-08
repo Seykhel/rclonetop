@@ -128,6 +128,27 @@ direct equivalent on macOS or the BSDs.
 
 ## Install
 
+Download the Linux `amd64` or `arm64` archive and `checksums.txt` from
+[GitHub Releases](https://github.com/Seykhel/rclonetop/releases).
+Verify the archive before extracting it. For example, with the amd64 archive
+for version 0.1.0 in the same directory as the checksum file:
+
+```sh
+sha256sum --check --ignore-missing checksums.txt
+mkdir rclonetop-0.1.0
+tar -xzf rclonetop_0.1.0_linux_amd64.tar.gz -C rclonetop-0.1.0
+mkdir -p ~/.local/bin
+install -m 755 rclonetop-0.1.0/rclonetop ~/.local/bin/rclonetop
+~/.local/bin/rclonetop --version
+```
+
+Add `~/.local/bin` to `PATH` to run `rclonetop` by name. Each archive includes
+README, LICENSE, NOTICE and a commented `rclonetop.conf.example`. Copy the
+example to `~/.config/rclonetop/rclonetop.conf` if you want to configure it;
+create that directory first.
+
+You can also install with Go:
+
 ```sh
 go install github.com/Seykhel/rclonetop/cmd/rclonetop@latest
 ```
@@ -351,7 +372,7 @@ screen's.
 
 ```sh
 go build ./...
-go test ./...
+go test -race -count=1 ./...
 go vet ./...
 ```
 
@@ -363,6 +384,9 @@ does not depend on what happens to be running.
 Run it with `-race`. The process collector feeds unit ownership to the systemd
 collector across a goroutine boundary, and that seam is covered by a test that
 only fails under the race detector.
+
+For configuration example updates and local archive checks with GoReleaser,
+see [Packaging](docs/packaging.md).
 
 ## Licence
 

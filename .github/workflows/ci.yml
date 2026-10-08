@@ -29,6 +29,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Snapshot versions include the commit and GoReleaser reads tags.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -67,3 +70,24 @@ jobs:
       # to have run the tests on this commit.
       - name: go test
         run: go test -race -count=1 ./...
+
+      - name: Configuration example
+        run: bash scripts/check-config-example.sh
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.2
+          # Only install-only exports the binary directory to subsequent steps.
+          install-only: true
+
+      - name: Check GoReleaser configuration
+        run: goreleaser check
+
+      # Snapshot mode builds and archives without publishing or needing a
+      # release token. Checking the extracted deliverables catches omissions
+      # that a valid GoReleaser configuration cannot.
+      - name: Snapshot packaging
+        run: |
+          goreleaser release --snapshot --clean
+          bash scripts/check-packaging.sh
