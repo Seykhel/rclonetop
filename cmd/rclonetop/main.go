@@ -187,6 +187,7 @@ func run() error {
 		Preset:      flags.preset,
 		Presets:     flags.presets,
 		ShownBoxes:  flags.shownBoxes,
+		VimKeys:     flags.vimKeys,
 		Host:        host,
 	}
 

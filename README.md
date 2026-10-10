@@ -158,6 +158,7 @@ rclonetop [options]
 | `--rc-pass <value>` | HTTP Basic password for those discovered RC endpoints |
 | `-p`, `--preset <0..9>` | view/layout to start in: `0` dense (default), `1`-`9` framed |
 | `-c`, `--config <file>` | read this configuration file instead of searching |
+| `--vim-keys` | enable `j`/`k` as Down/Up aliases (default false) |
 | `--default-config` | print a commented default configuration, then exit |
 | `-d`, `--debug` | print what each collector saw, then exit |
 | `-h`, `--help` | show usage |
@@ -181,9 +182,9 @@ only to endpoints discovered from observed rclone command lines. As with any
 command-line password, use a shell/history mechanism appropriate for your host.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
-already tuned there carries over. `--vim-keys` still has nothing on screen to
-move between and is not accepted yet -- a flag that is accepted and ignored is
-worse than one that is rejected.
+already tuned there carries over. `--vim-keys` (or `vim_keys = True` in the configuration) enables
+`j`/`k` as Down/Up aliases in the monitor, details and help. Arrow keys always
+work; `h` remains help. `--vim-keys=false` overrides an enabled configuration.
 
 ## Configuration
 

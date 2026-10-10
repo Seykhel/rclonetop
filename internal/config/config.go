@@ -36,10 +36,8 @@ const MinUpdateMS = 100
 
 // Config is the persisted configuration.
 //
-// Every field corresponds to an option that already does something. Keys for
-// the box presets and the keybindings are deliberately absent rather than
-// parsed and shelved: a key that is accepted and ignored is the same lie as a
-// flag that is, and it is harder to notice in a file than at a prompt.
+// Every field corresponds to an option consumed by the monitor. Configuration
+// is read once at startup; session changes are never written back.
 //
 // It is a comparable struct on purpose -- no slices, no maps -- because that is
 // what lets the round-trip test assert that --default-config prints exactly the
@@ -61,6 +59,8 @@ type Config struct {
 	Base10Sizes bool
 	// ForceTTY assumes a Linux console: eight colours and ASCII graphs.
 	ForceTTY bool
+	// VimKeys enables j/k aliases for vertical navigation.
+	VimKeys bool
 	// TrueColor is btop's spelling of the same choice --low-color makes from
 	// the other side, and it keeps that polarity: false means the 256-colour
 	// palette.
@@ -103,6 +103,7 @@ func Defaults() Config {
 		UpdateMS:        2000,
 		Base10Sizes:     false,
 		ForceTTY:        false,
+		VimKeys:         false,
 		TrueColor:       true,
 		ClockLayout:     "15:04:05",
 		ShownBoxes:      "",
@@ -243,6 +244,12 @@ func parse(name string, r io.Reader) (Config, error) {
 				return fail(err)
 			}
 			cfg.ForceTTY = b
+		case "vim_keys":
+			b, err := parseBool(value)
+			if err != nil {
+				return fail(err)
+			}
+			cfg.VimKeys = b
 		case "truecolor":
 			b, err := parseBool(value)
 			if err != nil {

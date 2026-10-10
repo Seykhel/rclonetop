@@ -323,11 +323,11 @@ func TestExplicitKeysAreRealFlagNames(t *testing.T) {
 	// renamed without its constant.
 	keys := []string{
 		flagTheme, flagGraphSymbol, flagUpdate,
-		flagThemeBackground, flagBase10, flagTTY, flagLowColor,
+		flagThemeBackground, flagBase10, flagTTY, flagLowColor, flagVimKeys,
 	}
 	args := []string{
 		"--theme=dracula", "--graph-symbol=block", "--update=500",
-		"--theme-background=false", "--base-10=true", "--tty=true", "--low-color=true",
+		"--theme-background=false", "--base-10=true", "--tty=true", "--low-color=true", "--vim-keys=false",
 	}
 	if len(args) != len(keys) {
 		t.Fatalf("%d flags typed for %d keys: they are meant to be the same list", len(args), len(keys))
@@ -419,5 +419,34 @@ func TestApplyConfigLeavesTheGraphSymbolUnchosen(t *testing.T) {
 	o = applyConfig(o, config.Defaults())
 	if o.graphSymbol != "" {
 		t.Errorf("graphSymbol = %q, want it left unchosen", o.graphSymbol)
+	}
+}
+
+func TestVimKeysFlagPrecedence(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		args       []string
+		file, want bool
+	}{
+		{"default", nil, false, false},
+		{"configuration enables", nil, true, true},
+		{"flag enables", []string{"--vim-keys"}, false, true},
+		{"explicit false beats configuration", []string{"--vim-keys=false"}, true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			o, err := parseFlags(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Defaults()
+			cfg.VimKeys = tt.file
+			o = applyConfig(o, cfg)
+			if o.vimKeys != tt.want {
+				t.Fatalf("Vim keys = %v, want %v", o.vimKeys, tt.want)
+			}
+		})
+	}
+	if _, err := parseFlags([]string{"--vim-keys=perhaps"}); err == nil {
+		t.Fatal("invalid boolean accepted")
 	}
 }

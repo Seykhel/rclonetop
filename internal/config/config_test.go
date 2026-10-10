@@ -84,7 +84,7 @@ func TestParseIgnoresUnknownKeys(t *testing.T) {
 	const file = `
 shown_boxes = "transfers remotes bandwidth"
 presets = "transfers:0:default"
-vim_keys = True
+future_key = True
 color_theme = "dracula"
 `
 	got, err := parse("test.conf", strings.NewReader(file))
@@ -258,7 +258,7 @@ func TestDefaultFileDocumentsEveryKey(t *testing.T) {
 	keys := []string{
 		"color_theme", "theme_background", "graph_symbol",
 		"update_ms", "base_10_sizes", "force_tty", "truecolor", "clock_layout",
-		"shown_boxes",
+		"shown_boxes", "vim_keys",
 		"preset_1", "preset_2", "preset_3", "preset_4", "preset_5", "preset_6", "preset_7", "preset_8", "preset_9",
 	}
 	// The list above is written out by hand, so a field added to Config would
@@ -339,5 +339,25 @@ func TestLoadPrefersXDGOverHome(t *testing.T) {
 	}
 	if got.ColorTheme != "from-xdg" {
 		t.Errorf("ColorTheme = %q, want from-xdg", got.ColorTheme)
+	}
+}
+
+func TestVimKeysConfiguration(t *testing.T) {
+	if Defaults().VimKeys {
+		t.Fatal("Vim keys must be opt-in")
+	}
+	for _, spelling := range []string{"True", "true", "TRUE"} {
+		got, err := parse("vim.conf", strings.NewReader("vim_keys = "+spelling))
+		if err != nil || !got.VimKeys {
+			t.Fatalf("vim_keys = %s: got %+v, %v", spelling, got, err)
+		}
+	}
+	got, err := parse("vim.conf", strings.NewReader("vim_keys = True\nvim_keys = False"))
+	if err != nil || got.VimKeys {
+		t.Fatalf("False must disable Vim keys: %+v, %v", got, err)
+	}
+	_, err = parse("vim.conf", strings.NewReader("# header\nvim_keys = yes"))
+	if err == nil || !strings.Contains(err.Error(), "vim.conf:2: vim_keys") {
+		t.Fatalf("invalid boolean must name file, line and key: %v", err)
 	}
 }
