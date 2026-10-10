@@ -515,3 +515,13 @@ func TestMainPIDResolvesUnknownScopeWithoutGuessingNames(t *testing.T) {
 		t.Fatalf("MainPID evidence was not used: %+v", v)
 	}
 }
+
+func TestProcessAliasSurvivesOwnershipDiscovery(t *testing.T) {
+	s := stateWith(State{Processes: []Process{{PID: 42, StartedAt: time.Unix(100, 0), Unit: "backup.service", UnitScope: "user"}}})
+	before := s.Resolve().Procs[0]
+	s.Units = []Unit{{Name: "backup.service", Scope: "user"}}
+	after := s.Resolve().Procs[0]
+	if before.Subject == after.Subject || before.ProcessSubject != after.ProcessSubject || after.ProcessSubject != before.Subject {
+		t.Fatal("ownership discovery lost the process alias")
+	}
+}

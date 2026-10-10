@@ -47,11 +47,13 @@ type SubjectID struct {
 func serviceID(u Unit) SubjectID { return SubjectID{Scope: u.Scope, Unit: u.Name} }
 
 type ProcRow struct {
-	Subject SubjectID
-	Unit    Unit
-	Timer   Unit
-	LastRun time.Time
-	Process Process
+	// ProcessSubject remains stable when newly collected ownership changes Subject.
+	ProcessSubject SubjectID
+	Subject        SubjectID
+	Unit           Unit
+	Timer          Unit
+	LastRun        time.Time
+	Process        Process
 
 	// RCStats is the exact accounting reported by the daemon this process
 	// serves, when that daemon was discovered and answered.
@@ -163,8 +165,9 @@ func (s *State) procRows() []ProcRow {
 			timer = s.timers()[serviceID(owner)]
 		}
 		rows = append(rows, ProcRow{
-			Process: p,
-			Subject: subject, Unit: owner, Timer: timer, LastRun: owner.LastRun(timer.LastTrigger),
+			Process:        p,
+			ProcessSubject: SubjectID{PID: p.PID, StartedAt: p.StartedAt},
+			Subject:        subject, Unit: owner, Timer: timer, LastRun: owner.LastRun(timer.LastTrigger),
 			RCStats:     rc,
 			Job:         job,
 			Errors:      concatLines(owner.Errors, job.Errors),
