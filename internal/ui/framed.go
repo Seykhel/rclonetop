@@ -26,7 +26,7 @@ import (
 // only, which reads as a broken frame rather than as a padding bug.
 func (m Model) renderFramed() string {
 	width := effectiveWidth(m.width)
-	v := m.state.Resolve()
+	v := m.monitorProjection()
 
 	var preset *presetLayout
 	if m.presetLayouts[m.preset].configured {
@@ -216,6 +216,8 @@ func (m Model) transfersBody(v model.View, width int) []string {
 		// Before any collector has reported, "nothing is running" would
 		// be a claim rclonetop has not yet checked.
 		return []string{m.style("inactive_fg").Render("collecting…")}
+	case len(v.Procs) == 0 && m.filterActive():
+		return []string{m.value().Render(m.filteredEmpty())}
 	case len(v.Procs) == 0:
 		return []string{m.style("inactive_fg").Render("no rclone process running")}
 	}
@@ -262,6 +264,9 @@ const meterMargin = 4
 // the room this panel has, which inside a frame is not the terminal.
 func (m Model) bandwidthBody(v model.View, width, height int) []string {
 	if len(v.Procs) == 0 {
+		if m.filterActive() {
+			return []string{m.value().Render("no matching process")}
+		}
 		return []string{m.style("inactive_fg").Render("idle")}
 	}
 
@@ -365,6 +370,9 @@ func (m Model) filesBody(v model.View, width int) []string {
 	if len(lines) == 0 {
 		// Nil and empty mean different things about a job's file list,
 		// and both of them mean there is nothing to draw here.
+		if m.filterActive() {
+			return []string{m.value().Render("no files in flight for matching processes")}
+		}
 		return []string{m.style("inactive_fg").Render("no files in flight")}
 	}
 	return lines

@@ -10,6 +10,8 @@ type keyAction uint8
 
 const (
 	actionHelp keyAction = iota
+	actionFilter
+	actionFilterEditor
 	actionDetails
 	actionEscape
 	actionScrollUp
@@ -37,7 +39,7 @@ type keyBinding struct {
 func keyBindings() []keyBinding {
 	bindings := []keyBinding{
 		{actionHelp, []string{"?", "h"}, "Help", "Open or close help"},
-		{actionEscape, []string{"esc"}, "Help", "Close help/details; otherwise quit"},
+		{actionEscape, []string{"esc"}, "Help", "Close help/details; clear filter; otherwise quit"},
 		{actionScrollUp, []string{"up"}, "Help", "Select previous subject; scroll help/details up"},
 		{actionScrollDown, []string{"down"}, "Help", "Select next subject; scroll help/details down"},
 		{actionPageUp, []string{"pgup"}, "Help", "Scroll help/details up by one page"},
@@ -51,6 +53,14 @@ func keyBindings() []keyBinding {
 		bindings = append(bindings, keyBinding{actionPanel, []string{strconv.Itoa(panel.hotkey)},
 			"Framed panels (session only)", "Toggle " + panel.title})
 	}
+	bindings = append(bindings,
+		keyBinding{actionFilter, []string{"/"}, "Filtering", "Edit subject filter (monitor only)"},
+		keyBinding{actionFilterEditor, []string{"Enter / Esc"}, "Filter editing", "confirm / cancel preview; Esc restores selection"},
+		keyBinding{actionFilterEditor, []string{"Left / Right"}, "Filter editing", "Move cursor by character"},
+		keyBinding{actionFilterEditor, []string{"Home / End"}, "Filter editing", "Move cursor to beginning / end"},
+		keyBinding{actionFilterEditor, []string{"Backspace / Delete"}, "Filter editing", "Delete previous / next character"},
+		keyBinding{actionFilterEditor, []string{"Ctrl+U"}, "Filter editing", "Clear text; Ctrl+C quits"},
+		keyBinding{actionFilterEditor, []string{"Printable / paste"}, "Filter editing", "Insert literal text (including q/h/j/k); Up/Down suspended"})
 	return append(bindings,
 		keyBinding{actionFaster, []string{"+", "="}, "Refresh (screen only; collector cadence stays the same)", "Refresh faster (halve interval, minimum 100ms)"},
 		keyBinding{actionSlower, []string{"-", "_"}, "Refresh (screen only; collector cadence stays the same)", "Refresh slower (double interval, maximum 30000ms)"},
@@ -59,7 +69,7 @@ func keyBindings() []keyBinding {
 
 func bindingForKey(key string) (keyBinding, bool) {
 	for _, binding := range keyBindings() {
-		if binding.group == "Vim keys (--vim-keys only)" {
+		if binding.action == actionFilterEditor || binding.group == "Vim keys (--vim-keys only)" {
 			continue
 		}
 		for _, accepted := range binding.keys {
@@ -89,5 +99,6 @@ func (b keyBinding) helpText() string {
 			labels[i] = key
 		}
 	}
-	return fmt.Sprintf("%-15s%s", strings.Join(labels, " / "), b.description)
+	label := strings.Join(labels, " / ")
+	return fmt.Sprintf("%-*s%s", max(15, len(label)+1), label, b.description)
 }

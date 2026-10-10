@@ -112,7 +112,7 @@ func TestHelpListsEveryCommandInACenteredFrame(t *testing.T) {
 			words := strings.Join(strings.Fields(view), " ")
 			for _, command := range []string{
 				"? / h Open or close help",
-				"Esc Close help/details; otherwise quit",
+				"Esc Close help/details; clear filter; otherwise quit",
 				"Up Select previous subject; scroll help/details up",
 				"Down Select next subject; scroll help/details down",
 				"PgUp Scroll help/details up by one page",
