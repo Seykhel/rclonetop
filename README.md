@@ -171,6 +171,24 @@ panels and truncated lists do not prevent selection: the footer names the
 selected subject, and `>` marks its visible fragments. Navigation stops at
 either end. With `--vim-keys` (or `vim_keys = True`), `j`/`k` also mean Down/Up.
 
+Press `/` in the monitor to filter processes and services by a known name,
+path, remote, command kind, service/timer name or log path. Matching ignores
+case and outer whitespace; the entire query is one literal phrase within a
+single field. Errors, arguments, timestamps and measurements are not searched.
+Bisync pairs, orphan mounts and caches remain visible as host context.
+The footer shows the query and matching/total subject count, including subjects
+in hidden or clipped panels.
+
+Results update while you type and as collected data changes. `Enter` confirms;
+`Esc` cancels the preview and restores the previous filter and selection if
+still available. Reopen with `/` to edit the current query. Left/Right,
+Home/End, Backspace/Delete and `Ctrl+U` edit Unicode text; pasted newlines and
+tabs become spaces. Printable shortcuts, including `q`, `h`, `j` and `k`, are
+text while editing; Up/Down do not navigate, and `Ctrl+C` still quits.
+An excluded selection clears without choosing another. Clearing a filter does
+not select anything automatically. An already open detail remains live even
+if its subject stops matching. Filtering lasts only for this session.
+
 Details show current state, the latest known execution, available measurements,
 retained errors and source health. They use collected evidence, without a run
 history or a complete log reader. Missing measurements stay unknown; a parsed
@@ -184,7 +202,8 @@ possible. `?` or `h` opens help over details, and closing help returns to the
 same reading position. Monitor shortcuts are consumed while details or help
 are open; `q` and `Ctrl+C` always quit. Collection and graph sampling continue.
 
-Keys: `?` or `h` opens keyboard help; `q`, `Ctrl+C` or `Esc` quits the monitor.
+Keys: `?` or `h` opens keyboard help; `q` or `Ctrl+C` quits the monitor.
+`Esc` clears an active filter first and quits when no filter is active.
 Use `p` to alternate the dense view and the framed one,
 `P` to cycle through configured framed presets, `+`/`=` and `-`/`_` to refresh faster
 or slower, and in the framed view, `1`-`4` to

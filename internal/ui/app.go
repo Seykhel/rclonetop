@@ -67,6 +67,15 @@ type Model struct {
 	shownByPreset    [10]panelSet
 	framedPreset     int
 
+	// Editing keeps its own buffer and saved identity: preview exclusion must
+	// not prevent Escape from restoring a subject after ownership changes.
+	filterQuery        string
+	filterEditing      bool
+	filterBuffer       string
+	filterCursor       int
+	filterSaved        model.SubjectID
+	filterSavedProcess model.SubjectID
+
 	selected        model.SubjectID
 	selectedProcess model.SubjectID
 	detailProcess   model.SubjectID
@@ -225,6 +234,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.filterEditing {
+		return m.handleFilterKey(msg)
+	}
 	key := msg.String()
 	if m.opts.VimKeys {
 		if key == "j" {
@@ -261,8 +273,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch binding.action {
+	case actionFilter:
+		m.beginFilter()
 	case actionDetails:
-		if _, ok := findSubject(m.state.Resolve(), m.selected); ok {
+		if _, ok := findSubject(m.monitorProjection(), m.selected); ok {
 			m.detailOpen = true
 			m.detailSubject = m.selected
 			m.detailProcess = m.selectedProcess
@@ -274,7 +288,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(-1)
 	case actionScrollDown:
 		m.moveSelection(1)
-	case actionQuit, actionEscape:
+	case actionEscape:
+		if m.filterQuery != "" {
+			m.filterQuery = ""
+			return m, nil
+		}
+		fallthrough
+	case actionQuit:
 		m.quitting = true
 		if m.cancel != nil {
 			m.cancel()
@@ -404,6 +424,12 @@ func (m Model) View() string {
 }
 
 func (m Model) monitorView() string {
+	if (m.filterActive() || m.filterEditing) && m.height == 1 {
+		if m.filterEditing {
+			return m.filterPrompt(effectiveWidth(m.width))
+		}
+		return m.filterStatus(effectiveWidth(m.width))
+	}
 	if m.preset > 0 {
 		// Which may still hand back the dense view: a terminal with no
 		// room for frames gets the one that fits, and the preset is left

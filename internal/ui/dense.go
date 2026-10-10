@@ -41,7 +41,7 @@ func boxColorFor(k model.Kind) string {
 // should have an opinion about.
 func (m Model) renderDense() string {
 	width := effectiveWidth(m.width)
-	v := m.state.Resolve()
+	v := m.monitorProjection()
 
 	var b strings.Builder
 	b.WriteString(m.denseHeader(width))
@@ -52,6 +52,9 @@ func (m Model) renderDense() string {
 		// Before any collector has reported, "nothing is running" would be a
 		// claim rclonetop has not yet checked.
 		b.WriteString(m.style("inactive_fg").Render("collecting…"))
+		b.WriteString("\n")
+	case len(v.Procs) == 0 && m.filterActive():
+		b.WriteString(m.value().Render(m.filteredEmpty()))
 		b.WriteString("\n")
 	case len(v.Procs) == 0:
 		b.WriteString(m.style("inactive_fg").Render("no rclone process running"))
@@ -358,6 +361,12 @@ func (m Model) memStyle(rss uint64) lipgloss.Style {
 // always be explained.
 func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Source]error, width int) string {
 	rule := m.style("div_line").Render(strings.Repeat("─", max(width, 1)))
+	if m.filterActive() || m.filterEditing {
+		rule = m.filterStatus(width)
+	}
+	if m.filterEditing {
+		return rule + "\n" + m.filterPrompt(width)
+	}
 
 	var parts []string
 	sources := make([]string, 0, len(seen))
@@ -382,7 +391,7 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 	// rather than inert or stale data. Naming p here makes its action
 	// discoverable; an undisclosed key is as hard to use as an ignored flag.
 	elements := []string{m.label().Render("? help"), m.label().Render("q quit"), m.label().Render("p view")}
-	if subject, ok := findSubject(m.state.Resolve(), m.selected); ok {
+	if subject, ok := findSubject(m.monitorProjection(), m.selected); ok {
 		const hint = "Enter details"
 		name := Truncate(subject.label(), max(width-len(hint)-2, 1), false)
 		elements = append([]string{m.value().Render(name), m.label().Render(hint)}, elements...)
