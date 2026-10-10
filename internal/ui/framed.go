@@ -222,6 +222,7 @@ func (m Model) transfersBody(v model.View, width int) []string {
 
 	var lines []string
 	for _, row := range v.Procs {
+		start := len(lines)
 		lines = append(lines, m.procHead(row.Process, width), m.procMeta(row.Process))
 		lines = append(lines, bodyLines(m.jobProgress(row.Job))...)
 		lines = append(lines, bodyLines(m.rcDaemonLine(row.RCStats))...)
@@ -236,6 +237,9 @@ func (m Model) transfersBody(v model.View, width int) []string {
 			// without a total, and a bar at nought per cent would be a
 			// claim about progress rather than a report of it.
 			lines = append(lines, "  "+m.meter("cpu", frac, width-meterMargin))
+		}
+		for i := start; i < len(lines); i++ {
+			lines[i] = m.markSubject(row.Subject, lines[i], width)
 		}
 	}
 	return lines
@@ -265,15 +269,21 @@ func (m Model) bandwidthBody(v model.View, width, height int) []string {
 	var lines []string
 	for _, row := range v.Procs {
 		p := row.Process
-		lines = append(lines, m.procThroughput(p, width, false))
+		lines = append(lines, m.markSubject(row.Subject, m.procThroughput(p, width, false), width))
 		if rows < 1 || !p.IOAvailable {
 			// No room, or no counters to draw: the line above already
 			// says which, and a graph of nothing would contradict it.
 			continue
 		}
 		cells := width - graphIndent
-		lines = append(lines, m.tallGraph(m.graphs.read, p.PID, downward, cells, rows)...)
-		lines = append(lines, m.tallGraph(m.graphs.write, p.PID, upward, cells, rows)...)
+		for _, direction := range []struct {
+			rings map[int]*series.Ring
+			value direction
+		}{{m.graphs.read, downward}, {m.graphs.write, upward}} {
+			for _, line := range m.tallGraph(direction.rings, p.PID, direction.value, cells, rows) {
+				lines = append(lines, m.markSubject(row.Subject, line, width))
+			}
+		}
 	}
 	return lines
 }
@@ -350,7 +360,7 @@ func (m Model) tallGraph(rings map[int]*series.Ring, pid int, d direction, cells
 func (m Model) filesBody(v model.View, width int) []string {
 	var lines []string
 	for _, row := range v.Procs {
-		lines = append(lines, bodyLines(m.filesInFlight(row.Job, width))...)
+		lines = append(lines, bodyLines(m.markSubject(row.Subject, m.filesInFlight(row.Job, width), width))...)
 	}
 	if len(lines) == 0 {
 		// Nil and empty mean different things about a job's file list,
@@ -373,7 +383,7 @@ func (m Model) statusBody(v model.View, width int) []string {
 	lines = append(lines, bodyLines(m.denseUnits(v.Units, width))...)
 	lines = append(lines, bodyLines(m.denseCaches(v.Caches))...)
 	for _, row := range v.Procs {
-		lines = append(lines, bodyLines(m.renderErrors(row.Errors, row.RecoveredAt, width))...)
+		lines = append(lines, bodyLines(m.markSubject(row.Subject, m.renderErrors(row.Errors, row.RecoveredAt, width), width))...)
 	}
 	if len(lines) == 0 {
 		return []string{m.style("inactive_fg").Render("nothing to report")}

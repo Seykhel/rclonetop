@@ -221,14 +221,14 @@ func (m Model) denseProcess(row model.ProcRow, width int) string {
 	// unit and the job's own log recorded. The unit's own line is suppressed
 	// precisely because this process line already says everything else about
 	// the same thing, so this is where they have to appear.
-	return m.procHead(row.Process, width) + "\n" +
-		m.procMeta(row.Process) + "\n" +
-		m.procThroughput(row.Process, width, true) + "\n" +
-		m.jobProgress(row.Job) +
-		m.rcDaemonLine(row.RCStats) +
-		m.rcProgress(row.RCStats) +
-		m.filesInFlight(row.Job, width) +
-		m.renderErrors(row.Errors, row.RecoveredAt, width)
+	return m.markSubject(row.Subject, m.procHead(row.Process, width)+"\n"+
+		m.procMeta(row.Process)+"\n"+
+		m.procThroughput(row.Process, width, true)+"\n"+
+		m.jobProgress(row.Job)+
+		m.rcDaemonLine(row.RCStats)+
+		m.rcProgress(row.RCStats)+
+		m.filesInFlight(row.Job, width)+
+		m.renderErrors(row.Errors, row.RecoveredAt, width), width)
 }
 
 // The three lines a process is described by, separately because the framed view
@@ -382,6 +382,11 @@ func (m Model) denseFooter(seen map[model.Source]time.Time, errs map[model.Sourc
 	// rather than inert or stale data. Naming p here makes its action
 	// discoverable; an undisclosed key is as hard to use as an ignored flag.
 	elements := []string{m.label().Render("? help"), m.label().Render("q quit"), m.label().Render("p view")}
+	if subject, ok := findSubject(m.state.Resolve(), m.selected); ok {
+		const hint = "Enter details"
+		name := Truncate(subject.label(), max(width-len(hint)-2, 1), false)
+		elements = append([]string{m.value().Render(name), m.label().Render(hint)}, elements...)
+	}
 	if m.preset > 0 {
 		elements = append(elements, m.label().Render(fmt.Sprintf("preset %d  P next", m.preset)))
 	} else {

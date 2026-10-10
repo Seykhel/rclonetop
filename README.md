@@ -164,6 +164,26 @@ rclonetop [options]
 | `-h`, `--help` | show usage |
 | `-V`, `--version` | show the version |
 
+Use Up/Down to select running processes and systemd services, then `Enter`
+to open live details. Selection follows the subject when rows reorder and,
+when ownership is certain, when a process becomes a stopped service. Hidden
+panels and truncated lists do not prevent selection: the footer names the
+selected subject, and `>` marks its visible fragments. Navigation stops at
+either end. With `--vim-keys` (or `vim_keys = True`), `j`/`k` also mean Down/Up.
+
+Details show current state, the latest known execution, available measurements,
+retained errors and source health. They use collected evidence, without a run
+history or a complete log reader. Missing measurements stay unknown; a parsed
+log timestamp is not a completion time. Details update live, including new
+service runs. If the subject disappears, they report that it is unavailable.
+
+Details use a centered frame when they fit and the full terminal otherwise.
+Up/Down and `PgUp`/`PgDn` scroll; `Esc` returns to the monitor. Each opening
+starts at the top; live updates and resizing preserve the reading entry where
+possible. `?` or `h` opens help over details, and closing help returns to the
+same reading position. Monitor shortcuts are consumed while details or help
+are open; `q` and `Ctrl+C` always quit. Collection and graph sampling continue.
+
 Keys: `?` or `h` opens keyboard help; `q`, `Ctrl+C` or `Esc` quits the monitor.
 Use `p` to alternate the dense view and the framed one,
 `P` to cycle through configured framed presets, `+`/`=` and `-`/`_` to refresh faster
@@ -173,7 +193,7 @@ of the session.
 
 Help appears in a centered frame when it fits, otherwise fills the terminal.
 Use the arrow keys or `PgUp`/`PgDn` to scroll, and `Esc`, `?` or `h` to return
-to the monitor. Data and graphs continue updating while help is open; monitor
+to the previous view. Data and graphs continue updating while help is open; monitor
 shortcuts take effect after it closes. `q` and `Ctrl+C` still quit from help.
 
 RC credentials are intentionally command-line-only: rclonetop holds them only

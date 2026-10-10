@@ -116,7 +116,6 @@ func (m Model) renderHelp() string {
 		return strings.Join(rows, "\n")
 	}
 
-	width, height := effectiveWidth(m.width), effectiveHeight(m.height)
 	inner := helpWidth()
 	body := m.helpLines(inner)
 	// The frame already carries the title. Full-screen help needs the title
@@ -130,23 +129,9 @@ func (m Model) renderHelp() string {
 	content = append(content, m.helpFooter(inner))
 	panel := m.frameRows(frame, "Keyboard help", box.NoHotkey, m.style("div_line"), content)
 
-	// Slice the monitor in terminal cells, preserving its styles on either
-	// side. Dense content can exceed the screen's height; only the visible
-	// rectangle belongs behind an overlay.
-	background := strings.Split(m.monitorView(), "\n")
-	rows := make([]string, height)
-	x, y := (width-frame.Width)/2, (height-frame.Height)/2
-	for i := range rows {
-		line := ""
-		if i < len(background) {
-			line = background[i]
-		}
-		rows[i] = fitCell(line, width)
-		if i >= y && i < y+len(panel) {
-			rows[i] = ansi.Cut(rows[i], 0, x) +
-				lipgloss.NewStyle().Background(m.opts.Theme.Color("main_bg").Lipgloss()).Render(panel[i-y]) +
-				ansi.Cut(rows[i], x+frame.Width, width)
-		}
+	background := m.monitorView()
+	if m.detailOpen {
+		background = m.renderDetail()
 	}
-	return strings.Join(rows, "\n")
+	return m.overlay(panel, frame.Width, background)
 }
