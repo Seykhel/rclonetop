@@ -2,13 +2,21 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Seykhel/rclonetop/internal/collect"
 	"github.com/Seykhel/rclonetop/internal/config"
+	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/Seykhel/rclonetop/internal/ui"
 )
 
 // writeConf puts a configuration file in a temporary directory and returns its
@@ -67,5 +75,88 @@ func TestConfigForReadsANamedFile(t *testing.T) {
 	}
 	if cfg.UpdateMS != 750 {
 		t.Errorf("UpdateMS = %d, want 750", cfg.UpdateMS)
+	}
+}
+
+func TestMonitorNormalQuit(t *testing.T) {
+	for _, key := range []string{"q", "\x03", "\x1b"} {
+		t.Run(fmtKey(key), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err := runMonitor(ctx, nil, ui.Options{}, tea.WithInput(strings.NewReader(key)), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+			if err != nil {
+				t.Fatalf("normal quit: %v", err)
+			}
+		})
+	}
+}
+func fmtKey(key string) string {
+	switch key {
+	case "\x03":
+		return "ctrl+c"
+	case "\x1b":
+		return "escape"
+	default:
+		return key
+	}
+}
+
+// A collector blocked on host I/O must be released by every exit path.
+type waitingCollector struct{ stopped chan struct{} }
+
+func (c waitingCollector) Name() string            { return "waiting" }
+func (c waitingCollector) Source() model.Source    { return model.SourceProc }
+func (c waitingCollector) Interval() time.Duration { return time.Hour }
+func (c waitingCollector) Available() bool         { return true }
+func (c waitingCollector) Collect(ctx context.Context) (model.Snapshot, error) {
+	<-ctx.Done()
+	close(c.stopped)
+	return model.Snapshot{}, ctx.Err()
+}
+
+func TestMonitorStopsCollectors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := waitingCollector{stopped: make(chan struct{})}
+	err := runMonitor(ctx, []collect.Collector{c}, ui.Options{}, tea.WithInput(strings.NewReader("q")), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.stopped:
+	case <-ctx.Done():
+		t.Fatal("collector did not stop on quit")
+	}
+}
+
+func TestMonitorRequestedCancellationSucceeds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runMonitor(ctx, nil, ui.Options{}, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+	if err != nil {
+		t.Fatalf("requested cancellation: %v", err)
+	}
+}
+
+type failedInput struct{ err error }
+
+func (r failedInput) Read([]byte) (int, error) { return 0, r.err }
+
+func TestMonitorPreservesInputErrors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	failure := errors.New("terminal input failed")
+	err := runMonitor(ctx, nil, ui.Options{}, tea.WithInput(failedInput{failure}), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+	if !errors.Is(err, failure) {
+		t.Fatalf("Run = %v, want input failure", err)
+	}
+}
+
+func TestMonitorPreservesDeadlineErrors(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	err := runMonitor(ctx, nil, ui.Options{}, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run = %v, want deadline failure", err)
 	}
 }

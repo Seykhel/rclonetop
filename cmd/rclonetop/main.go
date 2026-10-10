@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -116,17 +117,11 @@ func run() error {
 	}
 	th.SetOpaqueBackground(flags.themeBackground)
 
-	// The context is cancelled either by a signal or by the user quitting, and
-	// that is what stops every collector goroutine.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigs
-		cancel()
-	}()
+	// Signals stop the terminal and its collectors. A keyboard quit only
+	// stops collectors: cancelling Bubble Tea's context turns tea.Quit into
+	// ErrProgramKilled, so the two contexts must have separate lifetimes.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	host, _ := os.Hostname()
 
@@ -183,9 +178,7 @@ func run() error {
 		})
 	}
 
-	results := collect.Run(ctx, collectors)
-
-	m := ui.New(results, ui.Options{
+	uiOpts := ui.Options{
 		Theme:       th,
 		UpdateMS:    flags.updateMS,
 		Base10:      flags.base10,
@@ -195,14 +188,28 @@ func run() error {
 		Presets:     flags.presets,
 		ShownBoxes:  flags.shownBoxes,
 		Host:        host,
-	}, cancel)
+	}
 
-	opts := []tea.ProgramOption{tea.WithContext(ctx)}
+	opts := []tea.ProgramOption{}
 	if !flags.noAltScreen {
 		opts = append(opts, tea.WithAltScreen())
 	}
 
+	return runMonitor(ctx, collectors, uiOpts, opts...)
+}
+
+func runMonitor(ctx context.Context, collectors []collect.Collector, uiOpts ui.Options, opts ...tea.ProgramOption) error {
+	collectCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := collect.Run(collectCtx, collectors)
+	m := ui.New(results, uiOpts, cancel)
+	opts = append(opts, tea.WithContext(ctx))
 	if _, err := tea.NewProgram(m, opts...).Run(); err != nil {
+		// An OS signal is a requested shutdown too. Preserve other failures,
+		// including deadlines, panic errors and terminal initialization errors.
+		if ctx.Err() == context.Canceled && errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return err
 	}
 	return nil
