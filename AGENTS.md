@@ -332,7 +332,7 @@ The rules that live there:
   likewise an unknown `graph_symbol`, since the plotter falls back to braille. A known key with a
   value that cannot mean anything — a number that is not a number, an `update_ms` below the floor —
   is an error naming the file and the line. Skipping is not free and the cost is real: a misspelled
-  key is skipped as silently as a future one, so `vim_keys = True` in a file does nothing and says
+  key is skipped as silently as a future one, so `vim_key = True` in a file does nothing and says
   nothing. That is the trade accepted, not a claim that the file warns.
 - **`clock_format` is the one unknown key that is refused**, because it is the one that never will be
   a later version's: it is btop's name for a value rclonetop cannot take. rclonetop spells it
@@ -443,20 +443,13 @@ Any new collector should follow the same shape: a real constructor plus an `...A
   the descriptor, and only for units systemd already lists. A script is read, never run: command
   substitution, `${VAR:-default}` and an unassigned variable all mean "no answer", because working
   out what those produce means executing it.
-- **No flag that does nothing.** `--vim-keys` is intentionally unregistered until there is something
-  on screen to move between; accepting and ignoring a flag is worse than rejecting it. `-p` was the
-  same story until #11 gave it something narrower to name than btop's own box arrangement: with two
-  real views to start on, `-p, --preset 0|1` is registered, and it takes only those two values because
-  those are the ones that exist. Short flags mirror btop's meaning where it applies. The same rule
-  binds `internal/config`: `presets` and `vim_keys` get no `Config` field to be parsed into and
-  shelved, and neither does `preset` -- it stays flag-only because a key of that name would collide
-  with btop's own `presets` before #7 builds what that one means. `shown_boxes` was on this list too
-  until #22 gave it a consumer: it names which of the framed view's panels to start with, parsed but
-  not validated in `internal/config` on the same terms as `graph_symbol`, and interpreted -- empty
-  means every panel, an unrecognised name is dropped -- in `internal/ui`, which is where that
-  vocabulary actually lives. A key read into a field that nothing consumes is the same lie as a flag,
-  and harder to notice in a file than at a prompt. (Unrecognised keys are still skipped in silence,
-  for the forward-compatibility reason below — that is a cost of the design, not a warning system.)
+- **No flag that does nothing.** Every flag and configuration key must have a runtime
+  consumer in the change that introduces it. `--vim-keys` / `vim_keys` enable `j`/`k` for subject
+  selection and scrolling; `-p, --preset` selects dense view 0 or a configured framed preset 1–9.
+  `shown_boxes` names the initial panels, interpreted by `internal/ui` (empty means every panel,
+  unrecognised names are dropped). Unknown keys remain silently skipped for forward compatibility.
+  For changes to selection, detail rendering, or modal keyboard routing, read
+  `docs/selection-detail.md`; it records the agreed identity, live-update and interaction rules.
 - **No new dependencies without a real reason.** Graphing and theme parsing are hand-written
   precisely because the requirement is narrower than any library's. `github.com/charmbracelet/x/term`
   is a direct require and was not a new dependency when it became one: bubbletea already links it to

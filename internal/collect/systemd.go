@@ -830,7 +830,8 @@ func (s *Systemd) scopeFlag(scope string) string {
 }
 
 // scopeFromCgroup recognizes the systemd hierarchy rather than guessing from
-// a service name. Non-systemd and incomplete paths leave ownership unknown.
+// a service name. Foreign or malformed user managers retain a nonmatching
+// scope, because systemctl --user observes only our own manager.
 func scopeFromCgroup(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		var hierarchy string
@@ -839,8 +840,22 @@ func scopeFromCgroup(content string) string {
 		} else if _, rest, ok := strings.Cut(line, ":name=systemd:"); ok {
 			hierarchy = rest
 		}
-		if strings.HasPrefix(hierarchy, "/user.slice/") && strings.Contains(hierarchy, "/user@") {
-			return "user"
+		parts := strings.Split(strings.TrimSpace(hierarchy), "/")
+		if len(parts) > 1 && parts[1] == "user.slice" {
+			// An unreadable or malformed manager must not fall back to matching the
+			// current user's similarly named service.
+			if len(parts) < 5 {
+				return "user:unknown"
+			}
+			uidText := strings.TrimSuffix(strings.TrimPrefix(parts[2], "user-"), ".slice")
+			uid, err := strconv.Atoi(uidText)
+			if err != nil || uid < 0 || parts[2] != "user-"+uidText+".slice" || parts[3] != "user@"+uidText+".service" {
+				return "user:unknown"
+			}
+			if uid == os.Getuid() {
+				return "user"
+			}
+			return "user:" + strconv.Itoa(uid)
 		}
 		if strings.HasPrefix(hierarchy, "/system.slice/") {
 			return "system"

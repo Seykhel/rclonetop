@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/Seykhel/rclonetop/internal/model"
@@ -300,5 +301,39 @@ func TestNoProcessesReportsEmptyNotNil(t *testing.T) {
 	}
 	if len(snap.Processes) != 0 {
 		t.Errorf("got %d processes, want none", len(snap.Processes))
+	}
+}
+
+// Observe ownership through the approved resolved-model seam; procfs is setup.
+func TestResolvedOwnershipDistinguishesUserManagers(t *testing.T) {
+	local := strconv.Itoa(os.Getuid())
+	foreign := strconv.Itoa(os.Getuid() + 1)
+	for _, tc := range []struct {
+		name, hierarchy string
+		owns            bool
+	}{
+		{"local", "/user.slice/user-" + local + ".slice/user@" + local + ".service/app.slice/backup.service", true},
+		{"foreign", "/user.slice/user-" + foreign + ".slice/user@" + foreign + ".service/app.slice/backup.service", false},
+		{"mismatched manager", "/user.slice/user-" + foreign + ".slice/user@" + local + ".service/app.slice/backup.service", false},
+		{"nested imitation", "/user.slice/example/user@" + local + ".service/backup.service", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "stat"), "btime 100\n")
+			writeProc(t, root, 42, "rclone", []string{"rclone", "sync", "a:", "b:"}, "", "")
+			writeFile(t, filepath.Join(root, "42", "cgroup"), "0::"+tc.hierarchy+"\n")
+			snap, err := NewProcsAt(root).Collect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := model.NewState()
+			state.Apply(snap)
+			state.Apply(model.Snapshot{Source: model.SourceSystemd, Units: []model.Unit{{Name: "backup.service", Scope: "user", Errors: []model.LogLine{{Message: "local journal"}}}}})
+			view := state.Resolve()
+			got := view.Procs[0].Unit.Name != ""
+			if got != tc.owns {
+				t.Fatalf("owner match=%v, want %v: %+v", got, tc.owns, view.Procs[0])
+			}
+		})
 	}
 }
