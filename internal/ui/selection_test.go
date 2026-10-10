@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/Seykhel/rclonetop/internal/collect"
 	"github.com/Seykhel/rclonetop/internal/model"
@@ -386,5 +387,85 @@ func TestConsoleDetailsUseASCIIFrameAndSelectionMarker(t *testing.T) {
 	view := stripStyles(m.View())
 	if !strings.Contains(view, "[Subject details]") || strings.ContainsAny(view, "╭╮╰╯│") {
 		t.Fatal("console detail must use ASCII geometry")
+	}
+}
+
+func TestDetailHeadingsAndWrappedFieldLabelsKeepTheirEmphasis(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+	m := helpSize(New(nil, Options{}, nil), 18, 6)
+	m = selectionResult(m, model.Snapshot{Source: model.SourceProc, Processes: []model.Process{{PID: 11, Kind: model.KindCopy, Paths: []string{"UNIQUE-OPERAND"}}}})
+	m, _ = helpKey(m, "down")
+	m = selectionEnter(m)
+	var read strings.Builder
+	for i := 0; i < 12; i++ {
+		read.WriteString(m.View())
+		m, _ = helpKey(m, "down")
+	}
+	for _, want := range []string{m.title().Render("Identity"), m.label().Render("Operand: "), m.value().Render("UNIQUE-"), m.label().Render("Process started:"), m.title().Render("scheduling")} {
+		if !strings.Contains(read.String(), want) {
+			t.Fatalf("missing semantic style %q in %q", want, read.String())
+		}
+	}
+}
+
+func TestDetailKeepsTheVisibleTokenInsideALongErrorAcrossRewraps(t *testing.T) {
+	start := time.Unix(1787000000, 0)
+	m := helpSize(New(nil, Options{}, nil), 34, 6)
+	u := model.Unit{Name: "backup.service", Scope: "user", LogFile: "/tmp/anchor.log"}
+	m = selectionResult(m, model.Snapshot{Source: model.SourceSystemd, At: start, Units: []model.Unit{u}})
+	var message strings.Builder
+	for i := 0; i < 160; i++ {
+		fmt.Fprintf(&message, "字%03d ", i)
+	}
+	m = selectionResult(m, model.Snapshot{Source: model.SourceLog, At: start, Jobs: []model.Job{{LogFile: u.LogFile, Errors: []model.LogLine{{At: start, Message: message.String()}}}}})
+	m, _ = helpKey(m, "down")
+	m = selectionEnter(m)
+	first := func() string { return strings.Split(stripStyles(m.View()), "\n")[0] }
+	for i := 0; i < 150 && !strings.Contains(first(), "字060"); i++ {
+		m, _ = helpKey(m, "down")
+	}
+	if !strings.Contains(first(), "字060") {
+		t.Fatal("middle of the long error must be reachable")
+	}
+	// The first complete token on the visible line is the reading anchor.
+	token := strings.Fields(first())[0]
+	for _, width := range []int{79, 22, 51, 34} {
+		m = helpSize(m, width, 6)
+		if !strings.Contains(first(), token) {
+			t.Fatalf("resize to %d lost reading token %q: %q", width, token, first())
+		}
+		u.ActiveState = "activating"
+		u.InactiveExit = start.Add(time.Hour)
+		m = selectionResult(m, model.Snapshot{Source: model.SourceSystemd, At: start.Add(time.Hour), Units: []model.Unit{u}})
+		if !strings.Contains(first(), token) {
+			t.Fatalf("live update lost reading token %q: %q", token, first())
+		}
+	}
+}
+
+func TestDetailKeepsTheReadingErrorWhenRetentionRemovesAnEarlierError(t *testing.T) {
+	start := time.Unix(1787000000, 0)
+	m := helpSize(New(nil, Options{}, nil), 55, 4)
+	u := model.Unit{Name: "backup.service", Scope: "user", LogFile: "/tmp/retention.log"}
+	m = selectionResult(m, model.Snapshot{Source: model.SourceSystemd, At: start, Units: []model.Unit{u}})
+	firstError := model.LogLine{At: start, Message: "OLD-ERROR"}
+	readingError := model.LogLine{At: start.Add(time.Second), Message: "READING-ERROR " + strings.Repeat("retained evidence ", 20)}
+	job := model.Job{LogFile: u.LogFile, Errors: []model.LogLine{firstError, readingError}}
+	m = selectionResult(m, model.Snapshot{Source: model.SourceLog, At: start, Jobs: []model.Job{job}})
+	m, _ = helpKey(m, "down")
+	m = selectionEnter(m)
+	first := func() string { return strings.Split(stripStyles(m.View()), "\n")[0] }
+	for i := 0; i < 100 && !strings.Contains(first(), "READING-ERROR"); i++ {
+		m, _ = helpKey(m, "down")
+	}
+	if !strings.Contains(first(), "READING-ERROR") {
+		t.Fatal("reading error must be reachable")
+	}
+	job.Errors = []model.LogLine{readingError, {At: start.Add(2 * time.Second), Message: "NEW-ERROR"}}
+	m = selectionResult(m, model.Snapshot{Source: model.SourceLog, At: start.Add(time.Minute), Jobs: []model.Job{job}})
+	if !strings.Contains(first(), "READING-ERROR") {
+		t.Fatalf("retention moved away from reading error: %q", first())
 	}
 }

@@ -74,7 +74,7 @@ type Model struct {
 	detailOpen      bool
 	detailOffset    int
 	detailAnchor    string
-	detailPart      int
+	detailByte      int
 
 	helpOpen   bool
 	helpOffset int
@@ -268,7 +268,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailProcess = m.selectedProcess
 			m.detailOffset = 0
 			m.detailAnchor = "title"
-			m.detailPart = 0
+			m.detailByte = 0
 		}
 	case actionScrollUp:
 		m.moveSelection(-1)

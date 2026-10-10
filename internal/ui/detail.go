@@ -13,10 +13,15 @@ import (
 	"github.com/Seykhel/rclonetop/internal/ui/box"
 )
 
-type detailEntry struct{ key, text string }
+type detailEntry struct {
+	key, text string
+	heading   bool
+	labels    []detailLabel // byte ranges of explicitly supplied field prefixes
+}
+type detailLabel struct{ start, end int }
 type detailLine struct {
 	key, text string
-	part      int
+	start     int // byte offset in the logical entry before wrapping
 }
 
 func instant(t time.Time) string {
@@ -29,9 +34,24 @@ func instant(t time.Time) string {
 // Detail reads the resolved subject only. Its logical entries keep the reading
 // position stable when earlier sections grow, or text wraps at a new width.
 func (m Model) detailEntries() []detailEntry {
-	entries := []detailEntry{{"title", "Subject details"}}
-	add := func(key, text string) { entries = append(entries, detailEntry{key, text}) }
-	section := func(key, title string) { add(key, title) }
+	entries := []detailEntry{{key: "title", text: "Subject details", heading: true}}
+	add := func(key, text string) { entries = append(entries, detailEntry{key: key, text: text}) }
+	field := func(key, name, value string) {
+		prefix := name + ": "
+		entries = append(entries, detailEntry{key: key, text: prefix + value, labels: []detailLabel{{0, len(prefix)}}})
+	}
+	// Parts alternate explicit label prefixes and their values.
+	compound := func(key string, parts ...string) {
+		entry := detailEntry{key: key}
+		for i := 0; i < len(parts); i += 2 {
+			start := len(entry.text)
+			entry.text += parts[i]
+			entry.labels = append(entry.labels, detailLabel{start, len(entry.text)})
+			entry.text += parts[i+1]
+		}
+		entries = append(entries, entry)
+	}
+	section := func(key, title string) { entries = append(entries, detailEntry{key: key, text: title, heading: true}) }
 	v := m.state.Resolve()
 	s, ok := findSubject(v, m.detailSubject)
 	if !ok {
@@ -56,58 +76,58 @@ func (m Model) detailEntries() []detailEntry {
 	if p != nil {
 		add("process", fmt.Sprintf("%s pid %d [%s]", p.Kind, p.PID, p.Source))
 		for i, path := range p.Paths {
-			add(fmt.Sprintf("path/%d", i), "Operand: "+path)
+			field(fmt.Sprintf("path/%d", i), "Operand", path)
 		}
 		if len(p.Paths) == 0 {
 			for i, path := range p.Remotes {
-				add(fmt.Sprintf("path/%d", i), "Remote: "+path)
+				field(fmt.Sprintf("path/%d", i), "Remote", path)
 			}
 		}
-		add("started", "Process started: "+instant(p.StartedAt))
+		field("started", "Process started", instant(p.StartedAt))
 	}
 	if u.Name != "" {
-		add("unit", "Service: "+u.Name+" ("+u.Scope+") ["+string(u.Source)+"]")
+		field("unit", "Service", u.Name+" ("+u.Scope+") ["+string(u.Source)+"]")
 	}
 	if job.LogFile != "" {
-		add("log", "Log file: "+job.LogFile)
+		field("log", "Log file", job.LogFile)
 	}
 	section("state", "State and outcome")
 	if p != nil {
 		add("running", "Process running")
 	}
 	if u.Name != "" {
-		add("unit-state", "Service: "+stripStyles(m.unitState(u))+"; active="+unknown(u.ActiveState)+"; sub="+unknown(u.SubState)+"; result="+unknown(u.Result))
+		compound("unit-state", "Service: ", stripStyles(m.unitState(u)), "; active=", unknown(u.ActiveState), "; sub=", unknown(u.SubState), "; result=", unknown(u.Result))
 		if exit := u.Exit(); exit != "" {
 			add("exit", exit)
 		}
 	}
-	add("outcome", "Log outcome: "+unknown(job.Outcome))
+	field("outcome", "Log outcome", unknown(job.Outcome))
 	section("times", "Times and scheduling")
 	if u.Name != "" {
-		add("unit-start", "Service left inactive: "+instant(u.InactiveExit))
-		add("unit-active", "Service entered active: "+instant(u.ActiveEnter))
-		add("unit-end", "Service entered inactive: "+instant(u.InactiveEnter))
+		field("unit-start", "Service left inactive", instant(u.InactiveExit))
+		field("unit-active", "Service entered active", instant(u.ActiveEnter))
+		field("unit-end", "Service entered inactive", instant(u.InactiveEnter))
 	}
 	if timer.Name != "" {
-		add("timer", "Timer: "+timer.Name+" ("+timer.Scope+")")
-		add("timer-last", "Timer last triggered: "+instant(timer.LastTrigger))
+		field("timer", "Timer", timer.Name+" ("+timer.Scope+")")
+		field("timer-last", "Timer last triggered", instant(timer.LastTrigger))
 		next := instant(timer.NextElapse)
 		if timer.NextElapse.IsZero() {
 			next = "stopped"
 		}
-		add("timer-next", "Timer next: "+next)
+		field("timer-next", "Timer next", next)
 	} else {
 		add("timer", "Timer unavailable")
 	}
-	add("log-at", "Last parsed log entry: "+instant(job.At)+" (not a completion time)")
+	field("log-at", "Last parsed log entry", instant(job.At)+" (not a completion time)")
 	section("statistics", "Statistics")
 	if p != nil {
-		add("memory", fmt.Sprintf("Process RSS: %s; threads: %d [%s]", Bytes(p.RSS, m.opts.Base10), p.Threads, p.Source))
+		compound("memory", "Process RSS: ", Bytes(p.RSS, m.opts.Base10), "; threads: ", fmt.Sprintf("%d [%s]", p.Threads, p.Source))
 		if !p.IOAvailable {
 			add("io", "Process throughput unavailable")
 		} else {
-			add("io", fmt.Sprintf("Process read: %s; write: %s [%s]", Rate(p.ReadRate, m.opts.Base10), Rate(p.WriteRate, m.opts.Base10), p.Source))
-			add("io-total", fmt.Sprintf("Process counters read: %s; write: %s [%s]", Bytes(p.ReadTotal, m.opts.Base10), Bytes(p.WriteTotal, m.opts.Base10), p.Source))
+			compound("io", "Process read: ", Rate(p.ReadRate, m.opts.Base10), "; write: ", Rate(p.WriteRate, m.opts.Base10)+" ["+string(p.Source)+"]")
+			compound("io-total", "Process counters read: ", Bytes(p.ReadTotal, m.opts.Base10), "; write: ", Bytes(p.WriteTotal, m.opts.Base10)+" ["+string(p.Source)+"]")
 		}
 	}
 	if !job.HaveStats {
@@ -149,7 +169,7 @@ func (m Model) detailEntries() []detailEntry {
 			if known && source != "" {
 				suffix = " [" + string(source) + "]"
 			}
-			add("stats/"+f.key, f.name+": "+value+suffix)
+			field("stats/"+f.key, f.name, value+suffix)
 		}
 	}
 	section("files", "Files in flight")
@@ -177,26 +197,30 @@ func (m Model) detailEntries() []detailEntry {
 			if f.ETAKnown {
 				eta = Duration(f.ETA)
 			}
-			add(fmt.Sprintf("file/%d/measurements", i), fmt.Sprintf("Progress: %s; moved: %s; size: %s; speed: %s; ETA: %s", pct, moved, size, speed, eta))
+			compound(fmt.Sprintf("file/%d/measurements", i), "Progress: ", pct, "; moved: ", moved, "; size: ", size, "; speed: ", speed, "; ETA: ", eta)
 		}
 	}
 	section("errors", "Retained errors")
 	if len(errs) == 0 {
 		add("errors-none", "No retained errors (not a complete log)")
 	}
+	errorOccurrences := map[string]int{}
 	for i, e := range errs {
 		source := model.SourceLog
 		if i < len(u.Errors) {
 			source = model.SourceSystemd
 		}
-		add(fmt.Sprintf("error/%s/%s/%d", source, instant(e.At), i), fmt.Sprintf("[%s] %s %s", source, instant(e.At), e.Message))
+		identity := fmt.Sprintf("error/%s/%s/%s", source, e.At.Format(time.RFC3339Nano), e.Message)
+		occurrence := errorOccurrences[identity]
+		errorOccurrences[identity]++
+		add(fmt.Sprintf("%s/%d", identity, occurrence), fmt.Sprintf("[%s] %s %s", source, instant(e.At), e.Message))
 	}
 	if rc != nil {
 		section("rc", "RC daemon and jobs")
-		add("rc-address", "RC endpoint: "+rc.Addr)
-		add("rc-at", "RC last observation: "+instant(rc.At))
+		field("rc-address", "RC endpoint", rc.Addr)
+		field("rc-at", "RC last observation", instant(rc.At))
 		d := rc.Daemon
-		add("rc-version", "rclone version: "+unknown(d.Version))
+		field("rc-version", "rclone version", unknown(d.Version))
 		heap, sys := "unknown", "unknown"
 		if d.Memory.HeapAllocSet {
 			heap = Bytes(d.Memory.HeapAlloc, m.opts.Base10)
@@ -204,8 +228,8 @@ func (m Model) detailEntries() []detailEntry {
 		if d.Memory.SysSet {
 			sys = Bytes(d.Memory.Sys, m.opts.Base10)
 		}
-		add("rc-heap", "Heap allocated: "+heap+" [rc]")
-		add("rc-sys", "System memory: "+sys+" [rc]")
+		field("rc-heap", "Heap allocated", heap+" [rc]")
+		field("rc-sys", "System memory", sys+" [rc]")
 		bandwidth := "unknown"
 		if d.Bandwidth.Known {
 			if d.Bandwidth.BytesPerSecond < 0 {
@@ -214,12 +238,12 @@ func (m Model) detailEntries() []detailEntry {
 				bandwidth = Rate(float64(d.Bandwidth.BytesPerSecond), m.opts.Base10)
 			}
 		}
-		add("rc-bandwidth", "Bandwidth limit: "+bandwidth)
+		field("rc-bandwidth", "Bandwidth limit", bandwidth)
 		switch {
 		case !d.VFS.Answered:
-			add("rc-vfs", "VFS cache: unknown")
+			field("rc-vfs", "VFS cache", "unknown")
 		case !d.VFS.DiskCache:
-			add("rc-vfs", "VFS disk cache: disabled")
+			field("rc-vfs", "VFS disk cache", "disabled")
 		default:
 			bytes, files := "unknown", "unknown"
 			if d.VFS.BytesSet {
@@ -228,7 +252,7 @@ func (m Model) detailEntries() []detailEntry {
 			if d.VFS.FilesSet {
 				files = fmt.Sprint(d.VFS.Files)
 			}
-			add("rc-vfs", "VFS disk cache: "+bytes+"; files: "+files)
+			compound("rc-vfs", "VFS disk cache: ", bytes, "; files: ", files)
 		}
 		for _, j := range rc.Jobs {
 			key := fmt.Sprintf("rc-job/%d", j.ID)
@@ -243,8 +267,8 @@ func (m Model) detailEntries() []detailEntry {
 					}
 				}
 			}
-			add(key, fmt.Sprintf("RC job %d: %s; group: %s", j.ID, outcome, unknown(j.Group)))
-			add(key+"/times", "Started: "+instant(j.StartTime)+"; ended: "+instant(j.EndTime)+"; duration: "+Duration(j.Duration))
+			compound(key, fmt.Sprintf("RC job %d: ", j.ID), outcome, "; group: ", unknown(j.Group))
+			compound(key+"/times", "Started: ", instant(j.StartTime), "; ended: ", instant(j.EndTime), "; duration: ", Duration(j.Duration))
 			if j.Error != "" {
 				add(key+"/error", "[rc] "+j.Error)
 			}
@@ -252,7 +276,7 @@ func (m Model) detailEntries() []detailEntry {
 	}
 	section("sources", "Sources")
 	if job.ReadError != "" {
-		add("log-error", "Log unreadable: "+job.ReadError)
+		field("log-error", "Log unreadable", job.ReadError)
 	}
 	sources := map[model.Source]bool{}
 	for source := range v.Seen {
@@ -268,11 +292,11 @@ func (m Model) detailEntries() []detailEntry {
 	sort.Strings(names)
 	for _, name := range names {
 		src := model.Source(name)
-		line := name + ": last collected " + instant(v.Seen[src])
+		line := "last collected " + instant(v.Seen[src])
 		if err := v.Errors[src]; err != nil {
 			line += "; source failed, retained data may be stale: " + err.Error()
 		}
-		add("source/"+name, line)
+		field("source/"+name, name, line)
 	}
 	return entries
 }
@@ -285,8 +309,35 @@ func unknown(s string) string {
 func (m Model) detailLines(width int) []detailLine {
 	var lines []detailLine
 	for _, entry := range m.detailEntries() {
-		for i, line := range strings.Split(ansi.Wrap(entry.text, max(width, 1), ""), "\n") {
-			lines = append(lines, detailLine{entry.key, m.value().Render(line), i})
+		offset := 0
+		for _, line := range strings.Split(ansi.Wrap(entry.text, max(width, 1), ""), "\n") {
+			// Wrap may consume a separator. Locate each plain-text fragment in order
+			// before styling so field metadata survives both wrapping and scrolling.
+			start := offset
+			if found := strings.Index(entry.text[offset:], line); found >= 0 {
+				start += found
+			}
+			end := min(start+len(line), len(entry.text))
+			styled := m.value().Render(line)
+			if entry.heading {
+				styled = m.title().Render(line)
+			} else if len(entry.labels) > 0 {
+				var out strings.Builder
+				cursor := 0
+				for _, label := range entry.labels {
+					lo, hi := max(label.start, start)-start, min(label.end, end)-start
+					if lo >= hi {
+						continue
+					}
+					out.WriteString(m.value().Render(line[cursor:lo]))
+					out.WriteString(m.label().Render(line[lo:hi]))
+					cursor = hi
+				}
+				out.WriteString(m.value().Render(line[cursor:]))
+				styled = out.String()
+			}
+			lines = append(lines, detailLine{entry.key, styled, start})
+			offset = end
 		}
 	}
 	return lines
@@ -310,7 +361,7 @@ func (m *Model) restoreDetailAnchor() {
 		return
 	}
 	for i, line := range lines {
-		if line.key == m.detailAnchor && line.part <= m.detailPart {
+		if line.key == m.detailAnchor && line.start <= m.detailByte {
 			m.detailOffset = i
 		}
 	}
@@ -336,7 +387,7 @@ func (m *Model) scrollDetail(action keyAction) {
 	lines := m.detailLines(width)
 	m.detailOffset = min(max(m.detailOffset, 0), max(len(lines)-rows, 0))
 	line := lines[min(m.detailOffset, len(lines)-1)]
-	m.detailAnchor, m.detailPart = line.key, line.part
+	m.detailAnchor, m.detailByte = line.key, line.start
 }
 func (m Model) detailFooter(width int) string {
 	for _, s := range []string{detailHint, "Esc back  ? help  q quit", "Esc back", "Esc"} {
