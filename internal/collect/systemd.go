@@ -241,12 +241,10 @@ func (s *Systemd) NoteProcesses(procs []model.Process) {
 		if !strings.HasSuffix(p.Unit, ".service") {
 			continue
 		}
-		// A cgroup path names the unit but not the scope it was defined in.
-		// Recording both is what makes the lookup find whichever exists; the
-		// cost of the wrong guess is one extra unit queried, which then simply
-		// is not there.
 		for _, scope := range s.scopes {
-			s.noteUnit(scope, p.Unit)
+			if p.UnitScope == "" || p.UnitScope == scope {
+				s.noteUnit(scope, p.Unit)
+			}
 		}
 	}
 }
@@ -829,4 +827,24 @@ func (s *Systemd) scopeFlag(scope string) string {
 		return "--system"
 	}
 	return "--user"
+}
+
+// scopeFromCgroup recognizes the systemd hierarchy rather than guessing from
+// a service name. Non-systemd and incomplete paths leave ownership unknown.
+func scopeFromCgroup(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		var hierarchy string
+		if rest, ok := strings.CutPrefix(line, "0::"); ok {
+			hierarchy = rest
+		} else if _, rest, ok := strings.Cut(line, ":name=systemd:"); ok {
+			hierarchy = rest
+		}
+		if strings.HasPrefix(hierarchy, "/user.slice/") && strings.Contains(hierarchy, "/user@") {
+			return "user"
+		}
+		if strings.HasPrefix(hierarchy, "/system.slice/") {
+			return "system"
+		}
+	}
+	return ""
 }

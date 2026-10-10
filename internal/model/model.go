@@ -95,6 +95,9 @@ type Process struct {
 	// in the unit's own cgroup.
 	Unit string
 
+	// UnitScope is user or system when the cgroup establishes it, otherwise empty.
+	UnitScope string
+
 	// RCAddr is the address this process serves the rc API on, if it was
 	// started with --rc-addr. It is how the rc collector finds daemons to
 	// talk to without ever scanning the network.
