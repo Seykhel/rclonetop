@@ -63,6 +63,10 @@ base_10_sizes = False
 #* unless graph_symbol says otherwise. Overrides color_theme when True.
 force_tty = False
 
+#* Enable j/k as Down/Up aliases in the monitor, details and help. Arrow keys
+#* remain available. --vim-keys=false overrides an enabled setting here.
+vim_keys = False
+
 #* Whether the terminal can render 24-bit colour. Set to False to quantise every
 #* colour down to the 256-colour palette; the gradients still work, with visible
 #* banding. Ignored when force_tty is True, which is stricter still.

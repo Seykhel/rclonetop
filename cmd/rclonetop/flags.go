@@ -16,19 +16,15 @@ import (
 // over: -u for the update rate, -t to force TTY mode, -l to limit the palette,
 // -c to name a configuration file, -p to start on a given view.
 //
-// Only flags that actually do something are registered. btop's -p named a
-// saved box arrangement and stayed unregistered until there was one to name;
-// -p here is a narrower question -- which of the two views that already exist
-// to start on -- and #11 answers it once two real views exist, ahead of #7's
-// larger box-preset system. --vim-keys still has nothing on screen to move
-// between, so it stays out: declaring it now would mean accepting a flag and
-// silently ignoring it, which is worse than not accepting it at all.
+// Flags with configuration counterparts use the same defaults and retain
+// whether they were explicitly typed, including boolean false values.
 type options struct {
 	themeName       string
 	graphSymbol     string
 	themeBackground bool
 	updateMS        int
 	base10          bool
+	vimKeys         bool
 	tty             bool
 	lowColor        bool
 	debug           bool
@@ -87,6 +83,7 @@ const (
 	flagBase10          = "base-10"
 	flagTTY             = "tty"
 	flagLowColor        = "low-color"
+	flagVimKeys         = "vim-keys"
 )
 
 func parseFlags(args []string) (options, error) {
@@ -131,6 +128,7 @@ func parseFlags(args []string) (options, error) {
 	num(&o.updateMS, d.UpdateMS, "u", flagUpdate)
 	boolean(&o.themeBackground, d.ThemeBackground, flagThemeBackground)
 	boolean(&o.base10, d.Base10Sizes, flagBase10)
+	boolean(&o.vimKeys, d.VimKeys, flagVimKeys)
 	boolean(&o.tty, d.ForceTTY, "t", flagTTY)
 	boolean(&o.lowColor, !d.TrueColor, "l", flagLowColor)
 	// No configuration key -- see the field.
@@ -206,6 +204,9 @@ func applyConfig(o options, cfg config.Config) options {
 	}
 	if !o.explicit[flagBase10] {
 		o.base10 = cfg.Base10Sizes
+	}
+	if !o.explicit[flagVimKeys] {
+		o.vimKeys = cfg.VimKeys
 	}
 	if !o.explicit[flagTTY] {
 		o.tty = cfg.ForceTTY
@@ -294,6 +295,7 @@ Options:
       --theme-background  use the theme's background colour (default true)
   -u, --update <ms>       refresh interval in milliseconds (default 2000)
       --base-10           size units in KB=1000 instead of KiB=1024
+      --vim-keys          enable j/k as Down/Up aliases (default false)
   -t, --tty               force TTY mode: 8 colours, and ASCII graphs unless
                           --graph-symbol says otherwise
   -l, --low-color         limit output to 256 colours
