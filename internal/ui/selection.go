@@ -50,7 +50,7 @@ func (s selectableSubject) label() string {
 	return ""
 }
 func (m *Model) moveSelection(delta int) {
-	list := subjects(m.state.Resolve())
+	list := subjects(m.monitorProjection())
 	if len(list) == 0 {
 		return
 	}
@@ -95,6 +95,10 @@ func (m *Model) reconcileSelection() {
 		return model.SubjectID{}, model.SubjectID{}
 	}
 	m.selected, m.selectedProcess = reconcile(m.selected, m.selectedProcess)
+	if m.filterEditing {
+		m.filterSaved, m.filterSavedProcess = reconcile(m.filterSaved, m.filterSavedProcess)
+	}
+	m.clearExcludedSelection()
 	if m.detailOpen {
 		if id, alias := reconcile(m.detailSubject, m.detailProcess); id != (model.SubjectID{}) {
 			m.detailSubject, m.detailProcess = id, alias
