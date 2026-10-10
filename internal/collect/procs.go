@@ -153,6 +153,7 @@ func (p *Procs) readProcess(pid int, now time.Time) (model.Process, bool) {
 	proc.RSS, proc.Threads = readStatus(filepath.Join(dir, "status"))
 	if raw, err := os.ReadFile(filepath.Join(dir, "cgroup")); err == nil {
 		proc.Unit = unitFromCgroup(string(raw))
+		proc.UnitScope = scopeFromCgroup(string(raw))
 	}
 	// The working directory resolves the relative paths on the command line --
 	// "--log-file rclone.log" names a file only once this is known. The link
