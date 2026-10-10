@@ -2,13 +2,15 @@ package ui
 
 import (
 	"fmt"
-	"github.com/Seykhel/rclonetop/internal/model"
-	"github.com/Seykhel/rclonetop/internal/ui/box"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Seykhel/rclonetop/internal/model"
+	"github.com/Seykhel/rclonetop/internal/ui/box"
 )
 
 type detailEntry struct{ key, text string }
@@ -159,6 +161,23 @@ func (m Model) detailEntries() []detailEntry {
 	default:
 		for i, f := range job.Transferring {
 			add(fmt.Sprintf("file/%d", i), f.Name)
+			pct, size, speed, moved, eta := "unknown", "unknown", "unknown", "unknown", "unknown"
+			if f.Percentage >= 0 {
+				pct = fmt.Sprintf("%d%%", f.Percentage)
+			}
+			if f.Size >= 0 {
+				size = Bytes(uint64(f.Size), m.opts.Base10)
+			}
+			if f.Speed >= 0 {
+				speed = Rate(f.Speed, m.opts.Base10)
+			}
+			if f.BytesKnown {
+				moved = Bytes(f.Bytes, m.opts.Base10)
+			}
+			if f.ETAKnown {
+				eta = Duration(f.ETA)
+			}
+			add(fmt.Sprintf("file/%d/measurements", i), fmt.Sprintf("Progress: %s; moved: %s; size: %s; speed: %s; ETA: %s", pct, moved, size, speed, eta))
 		}
 	}
 	section("errors", "Retained errors")
@@ -173,7 +192,63 @@ func (m Model) detailEntries() []detailEntry {
 		add(fmt.Sprintf("error/%s/%s/%d", source, instant(e.At), i), fmt.Sprintf("[%s] %s %s", source, instant(e.At), e.Message))
 	}
 	if rc != nil {
+		section("rc", "RC daemon and jobs")
+		add("rc-address", "RC endpoint: "+rc.Addr)
 		add("rc-at", "RC last observation: "+instant(rc.At))
+		d := rc.Daemon
+		add("rc-version", "rclone version: "+unknown(d.Version))
+		heap, sys := "unknown", "unknown"
+		if d.Memory.HeapAllocSet {
+			heap = Bytes(d.Memory.HeapAlloc, m.opts.Base10)
+		}
+		if d.Memory.SysSet {
+			sys = Bytes(d.Memory.Sys, m.opts.Base10)
+		}
+		add("rc-heap", "Heap allocated: "+heap+" [rc]")
+		add("rc-sys", "System memory: "+sys+" [rc]")
+		bandwidth := "unknown"
+		if d.Bandwidth.Known {
+			if d.Bandwidth.BytesPerSecond < 0 {
+				bandwidth = "unlimited"
+			} else {
+				bandwidth = Rate(float64(d.Bandwidth.BytesPerSecond), m.opts.Base10)
+			}
+		}
+		add("rc-bandwidth", "Bandwidth limit: "+bandwidth)
+		switch {
+		case !d.VFS.Answered:
+			add("rc-vfs", "VFS cache: unknown")
+		case !d.VFS.DiskCache:
+			add("rc-vfs", "VFS disk cache: disabled")
+		default:
+			bytes, files := "unknown", "unknown"
+			if d.VFS.BytesSet {
+				bytes = Bytes(d.VFS.BytesUsed, m.opts.Base10)
+			}
+			if d.VFS.FilesSet {
+				files = fmt.Sprint(d.VFS.Files)
+			}
+			add("rc-vfs", "VFS disk cache: "+bytes+"; files: "+files)
+		}
+		for _, j := range rc.Jobs {
+			key := fmt.Sprintf("rc-job/%d", j.ID)
+			outcome := "running"
+			if j.Finished {
+				outcome = "finished; outcome unknown"
+				if j.SuccessKnown {
+					if j.Success {
+						outcome = "successful"
+					} else {
+						outcome = "failed"
+					}
+				}
+			}
+			add(key, fmt.Sprintf("RC job %d: %s; group: %s", j.ID, outcome, unknown(j.Group)))
+			add(key+"/times", "Started: "+instant(j.StartTime)+"; ended: "+instant(j.EndTime)+"; duration: "+Duration(j.Duration))
+			if j.Error != "" {
+				add(key+"/error", "[rc] "+j.Error)
+			}
+		}
 	}
 	section("sources", "Sources")
 	if job.ReadError != "" {

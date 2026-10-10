@@ -43,7 +43,7 @@ func keyBindings() []keyBinding {
 		{actionPageUp, []string{"pgup"}, "Help", "Scroll help/details up by one page"},
 		{actionPageDown, []string{"pgdown"}, "Help", "Scroll help/details down by one page"},
 		{actionDetails, []string{"enter"}, "Selection", "Open details for selected subject"},
-		{actionScrollDown, []string{"j"}, "Vim keys (--vim-keys only)", "Down alias; k is Up (h remains help)"},
+		{actionScrollDown, []string{"j", "k"}, "Vim keys (--vim-keys only)", "Down / Up aliases (h remains help)"},
 		{actionView, []string{"p"}, "Views", "Alternate dense and remembered framed view"},
 		{actionNextPreset, []string{"P"}, "Views", "Cycle configured framed presets (enter framed from dense)"},
 	}

@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
-	"github.com/Seykhel/rclonetop/internal/model"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Seykhel/rclonetop/internal/model"
 )
 
 // The sequence comes from Resolve, before any panel hides or clips its rows.
@@ -69,10 +71,34 @@ func (m *Model) moveSelection(delta int) {
 		at = min(max(at+delta, 0), len(list)-1)
 	}
 	m.selected = list[at].id
+	m.selectedProcess = model.SubjectID{}
+	if list[at].process != nil {
+		m.selectedProcess = list[at].process.ProcessSubject
+	}
 }
 func (m *Model) reconcileSelection() {
-	if _, ok := findSubject(m.state.Resolve(), m.selected); !ok {
-		m.selected = model.SubjectID{}
+	v := m.state.Resolve()
+	reconcile := func(id, alias model.SubjectID) (model.SubjectID, model.SubjectID) {
+		if subject, ok := findSubject(v, id); ok {
+			if subject.process != nil {
+				alias = subject.process.ProcessSubject
+			}
+			return id, alias
+		}
+		if alias != (model.SubjectID{}) {
+			for _, row := range v.Procs {
+				if row.ProcessSubject == alias {
+					return row.Subject, alias
+				}
+			}
+		}
+		return model.SubjectID{}, model.SubjectID{}
+	}
+	m.selected, m.selectedProcess = reconcile(m.selected, m.selectedProcess)
+	if m.detailOpen {
+		if id, alias := reconcile(m.detailSubject, m.detailProcess); id != (model.SubjectID{}) {
+			m.detailSubject, m.detailProcess = id, alias
+		}
 	}
 }
 

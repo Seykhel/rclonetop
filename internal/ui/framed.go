@@ -276,8 +276,14 @@ func (m Model) bandwidthBody(v model.View, width, height int) []string {
 			continue
 		}
 		cells := width - graphIndent
-		lines = append(lines, m.tallGraph(m.graphs.read, p.PID, downward, cells, rows)...)
-		lines = append(lines, m.tallGraph(m.graphs.write, p.PID, upward, cells, rows)...)
+		for _, direction := range []struct {
+			rings map[int]*series.Ring
+			value direction
+		}{{m.graphs.read, downward}, {m.graphs.write, upward}} {
+			for _, line := range m.tallGraph(direction.rings, p.PID, direction.value, cells, rows) {
+				lines = append(lines, m.markSubject(row.Subject, line, width))
+			}
+		}
 	}
 	return lines
 }

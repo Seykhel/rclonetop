@@ -67,12 +67,14 @@ type Model struct {
 	shownByPreset    [10]panelSet
 	framedPreset     int
 
-	selected      model.SubjectID
-	detailSubject model.SubjectID
-	detailOpen    bool
-	detailOffset  int
-	detailAnchor  string
-	detailPart    int
+	selected        model.SubjectID
+	selectedProcess model.SubjectID
+	detailProcess   model.SubjectID
+	detailSubject   model.SubjectID
+	detailOpen      bool
+	detailOffset    int
+	detailAnchor    string
+	detailPart      int
 
 	helpOpen   bool
 	helpOffset int
@@ -263,6 +265,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if _, ok := findSubject(m.state.Resolve(), m.selected); ok {
 			m.detailOpen = true
 			m.detailSubject = m.selected
+			m.detailProcess = m.selectedProcess
 			m.detailOffset = 0
 			m.detailAnchor = "title"
 			m.detailPart = 0
