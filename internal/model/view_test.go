@@ -454,3 +454,64 @@ func TestLastRunFallsBackToTheTimersTrigger(t *testing.T) {
 		t.Errorf("got %v, want the timer's last trigger", got)
 	}
 }
+
+func TestSelectionIdentitySurvivesServiceTransitionAndDistinguishesPIDReuse(t *testing.T) {
+	start := time.Unix(100, 0)
+	s := stateWith(State{Processes: []Process{{PID: 42, StartedAt: start, Unit: "backup.service"}}, Units: []Unit{{Name: "backup.service", Scope: "user"}, {Name: "backup.timer", Scope: "user", Triggers: "backup.service"}}})
+	running := s.Resolve().Procs[0]
+	if running.Unit.Scope != "user" || running.Timer.Name != "backup.timer" {
+		t.Fatalf("missing owner facts: %+v", running)
+	}
+	s.Processes = nil
+	if running.Subject != s.Resolve().Units[0].Subject {
+		t.Fatal("service identity changed after process exited")
+	}
+	s.Processes = []Process{{PID: 42, StartedAt: start}}
+	first := s.Resolve().Procs[0].Subject
+	s.Processes[0].StartedAt = start.Add(time.Second)
+	if first == s.Resolve().Procs[0].Subject {
+		t.Fatal("reused PID retained process identity")
+	}
+}
+
+func TestScopeCollisionNeverGuessesProcessOwnership(t *testing.T) {
+	s := stateWith(State{Processes: []Process{{PID: 42, Unit: "backup.service"}}, Units: []Unit{
+		{Name: "backup.service", Scope: "user", Errors: []LogLine{{Message: "user"}}},
+		{Name: "backup.service", Scope: "system", Errors: []LogLine{{Message: "system"}}},
+		{Name: "backup.timer", Scope: "user", Triggers: "backup.service"},
+		{Name: "backup.timer", Scope: "system", Triggers: "backup.service"},
+	}})
+	v := s.Resolve()
+	if len(v.Units) != 2 || len(v.Procs[0].Errors) != 0 || v.Procs[0].Subject.Unit != "" {
+		t.Fatalf("ambiguous owner was guessed: %+v", v)
+	}
+	for _, row := range v.Units {
+		if row.Timer.Scope != row.Unit.Scope {
+			t.Fatal("timer crossed scopes")
+		}
+	}
+	s.Processes[0].UnitScope = "user"
+	v = s.Resolve()
+	if len(v.Units) != 1 || v.Units[0].Unit.Scope != "system" || v.Procs[0].Unit.Scope != "user" || v.Procs[0].Timer.Scope != "user" {
+		t.Fatalf("scoped owner not preserved: %+v", v)
+	}
+}
+
+func TestSeveralProcessesOfOneServiceRemainDistinctSubjects(t *testing.T) {
+	s := stateWith(State{Processes: []Process{{PID: 1, Unit: "backup.service"}, {PID: 2, Unit: "backup.service"}}, Units: []Unit{{Name: "backup.service", Scope: "user"}, {Name: "backup.timer", Scope: "user", Triggers: "backup.service"}}})
+	v := s.Resolve()
+	if v.Procs[0].Timer.Name != "backup.timer" {
+		t.Fatal("multi-process service lost its timer")
+	}
+	if v.Procs[0].Subject == v.Procs[1].Subject {
+		t.Fatal("two live processes have the same selection identity")
+	}
+}
+
+func TestMainPIDResolvesUnknownScopeWithoutGuessingNames(t *testing.T) {
+	s := stateWith(State{Processes: []Process{{PID: 42, Unit: "backup.service"}}, Units: []Unit{{Name: "backup.service", Scope: "user", MainPID: 42}, {Name: "backup.service", Scope: "system", MainPID: 99}}})
+	v := s.Resolve()
+	if v.Procs[0].Unit.Scope != "user" || len(v.Units) != 1 || v.Units[0].Unit.Scope != "system" {
+		t.Fatalf("MainPID evidence was not used: %+v", v)
+	}
+}
