@@ -95,6 +95,11 @@ type Process struct {
 	// in the unit's own cgroup.
 	Unit string
 
+	// UnitScope is user (our manager), system, or user:<uid> for another
+	// manager. user:unknown prevents malformed user hierarchies matching ours.
+	// Empty means the hierarchy could not establish a scope.
+	UnitScope string
+
 	// RCAddr is the address this process serves the rc API on, if it was
 	// started with --rc-addr. It is how the rc collector finds daemons to
 	// talk to without ever scanning the network.

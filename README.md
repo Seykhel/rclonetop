@@ -158,10 +158,31 @@ rclonetop [options]
 | `--rc-pass <value>` | HTTP Basic password for those discovered RC endpoints |
 | `-p`, `--preset <0..9>` | view/layout to start in: `0` dense (default), `1`-`9` framed |
 | `-c`, `--config <file>` | read this configuration file instead of searching |
+| `--vim-keys` | enable `j`/`k` as Down/Up aliases (default false) |
 | `--default-config` | print a commented default configuration, then exit |
 | `-d`, `--debug` | print what each collector saw, then exit |
 | `-h`, `--help` | show usage |
 | `-V`, `--version` | show the version |
+
+Use Up/Down to select running processes and systemd services, then `Enter`
+to open live details. Selection follows the subject when rows reorder and,
+when ownership is certain, when a process becomes a stopped service. Hidden
+panels and truncated lists do not prevent selection: the footer names the
+selected subject, and `>` marks its visible fragments. Navigation stops at
+either end. With `--vim-keys` (or `vim_keys = True`), `j`/`k` also mean Down/Up.
+
+Details show current state, the latest known execution, available measurements,
+retained errors and source health. They use collected evidence, without a run
+history or a complete log reader. Missing measurements stay unknown; a parsed
+log timestamp is not a completion time. Details update live, including new
+service runs. If the subject disappears, they report that it is unavailable.
+
+Details use a centered frame when they fit and the full terminal otherwise.
+Up/Down and `PgUp`/`PgDn` scroll; `Esc` returns to the monitor. Each opening
+starts at the top; live updates and resizing preserve the reading entry where
+possible. `?` or `h` opens help over details, and closing help returns to the
+same reading position. Monitor shortcuts are consumed while details or help
+are open; `q` and `Ctrl+C` always quit. Collection and graph sampling continue.
 
 Keys: `?` or `h` opens keyboard help; `q`, `Ctrl+C` or `Esc` quits the monitor.
 Use `p` to alternate the dense view and the framed one,
@@ -172,7 +193,7 @@ of the session.
 
 Help appears in a centered frame when it fits, otherwise fills the terminal.
 Use the arrow keys or `PgUp`/`PgDn` to scroll, and `Esc`, `?` or `h` to return
-to the monitor. Data and graphs continue updating while help is open; monitor
+to the previous view. Data and graphs continue updating while help is open; monitor
 shortcuts take effect after it closes. `q` and `Ctrl+C` still quit from help.
 
 RC credentials are intentionally command-line-only: rclonetop holds them only
@@ -181,9 +202,9 @@ only to endpoints discovered from observed rclone command lines. As with any
 command-line password, use a shell/history mechanism appropriate for your host.
 
 The flags mirror btop's wherever the meaning is the same, so anything you have
-already tuned there carries over. `--vim-keys` still has nothing on screen to
-move between and is not accepted yet -- a flag that is accepted and ignored is
-worse than one that is rejected.
+already tuned there carries over. `--vim-keys` (or `vim_keys = True` in the configuration) enables
+`j`/`k` as Down/Up aliases in the monitor, details and help. Arrow keys always
+work; `h` remains help. `--vim-keys=false` overrides an enabled configuration.
 
 ## Configuration
 

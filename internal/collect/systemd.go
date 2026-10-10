@@ -241,12 +241,10 @@ func (s *Systemd) NoteProcesses(procs []model.Process) {
 		if !strings.HasSuffix(p.Unit, ".service") {
 			continue
 		}
-		// A cgroup path names the unit but not the scope it was defined in.
-		// Recording both is what makes the lookup find whichever exists; the
-		// cost of the wrong guess is one extra unit queried, which then simply
-		// is not there.
 		for _, scope := range s.scopes {
-			s.noteUnit(scope, p.Unit)
+			if p.UnitScope == "" || p.UnitScope == scope {
+				s.noteUnit(scope, p.Unit)
+			}
 		}
 	}
 }
@@ -829,4 +827,39 @@ func (s *Systemd) scopeFlag(scope string) string {
 		return "--system"
 	}
 	return "--user"
+}
+
+// scopeFromCgroup recognizes the systemd hierarchy rather than guessing from
+// a service name. Foreign or malformed user managers retain a nonmatching
+// scope, because systemctl --user observes only our own manager.
+func scopeFromCgroup(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		var hierarchy string
+		if rest, ok := strings.CutPrefix(line, "0::"); ok {
+			hierarchy = rest
+		} else if _, rest, ok := strings.Cut(line, ":name=systemd:"); ok {
+			hierarchy = rest
+		}
+		parts := strings.Split(strings.TrimSpace(hierarchy), "/")
+		if len(parts) > 1 && parts[1] == "user.slice" {
+			// An unreadable or malformed manager must not fall back to matching the
+			// current user's similarly named service.
+			if len(parts) < 5 {
+				return "user:unknown"
+			}
+			uidText := strings.TrimSuffix(strings.TrimPrefix(parts[2], "user-"), ".slice")
+			uid, err := strconv.Atoi(uidText)
+			if err != nil || uid < 0 || parts[2] != "user-"+uidText+".slice" || parts[3] != "user@"+uidText+".service" {
+				return "user:unknown"
+			}
+			if uid == os.Getuid() {
+				return "user"
+			}
+			return "user:" + strconv.Itoa(uid)
+		}
+		if strings.HasPrefix(hierarchy, "/system.slice/") {
+			return "system"
+		}
+	}
+	return ""
 }

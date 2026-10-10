@@ -33,10 +33,27 @@ type View struct {
 	Errors map[Source]error
 }
 
+// SubjectID identifies a service across runs, or one lifetime of a manual process.
+// An empty ID denotes no subject. Start time protects process IDs against reuse.
+type SubjectID struct {
+	Scope     string
+	Unit      string
+	PID       int
+	StartedAt time.Time
+}
+
+func serviceID(u Unit) SubjectID { return SubjectID{Scope: u.Scope, Unit: u.Name} }
+
 // ProcRow is a running process together with everything known about it from
 // elsewhere.
 type ProcRow struct {
-	Process Process
+	// ProcessSubject remains stable when newly collected ownership changes Subject.
+	ProcessSubject SubjectID
+	Subject        SubjectID
+	Unit           Unit
+	Timer          Unit
+	LastRun        time.Time
+	Process        Process
 
 	// RCStats is the exact accounting reported by the daemon this process
 	// serves, when that daemon was discovered and answered.
@@ -71,7 +88,8 @@ type ProcRow struct {
 // UnitRow is a service together with the timer that starts it and the log it
 // writes.
 type UnitRow struct {
-	Unit Unit
+	Subject SubjectID
+	Unit    Unit
 
 	// Timer is the timer that activates this service, or the zero value when
 	// none does. A timer that is present but has no NextElapse has been
@@ -131,9 +149,25 @@ func (s *State) procRows() []ProcRow {
 				job.Transferring = rc.Transferring
 			}
 		}
-		owner, _ := s.unitFor(p)
+		owner, owned := s.unitFor(p)
+		subject := SubjectID{PID: p.PID, StartedAt: p.StartedAt}
+		var timer Unit
+		if owned {
+			count := 0
+			for _, other := range s.Processes {
+				if unit, ok := s.unitFor(other); ok && serviceID(unit) == serviceID(owner) {
+					count++
+				}
+			}
+			if count == 1 {
+				subject = serviceID(owner)
+			}
+			timer = s.timers()[serviceID(owner)]
+		}
 		rows = append(rows, ProcRow{
-			Process:     p,
+			Process:        p,
+			ProcessSubject: SubjectID{PID: p.PID, StartedAt: p.StartedAt},
+			Subject:        subject, Unit: owner, Timer: timer, LastRun: owner.LastRun(timer.LastTrigger),
 			RCStats:     rc,
 			Job:         job,
 			Errors:      concatLines(owner.Errors, job.Errors),
@@ -235,38 +269,19 @@ func (s *State) rcStatsForAddr(addr string) *RCStats {
 // would double the length of the section and split the two halves of a single
 // answer: a timer's schedule is only meaningful next to the result of the job
 // it starts.
-func (s *State) unitRows(shown map[string]bool) []UnitRow {
-	timers := make(map[string]Unit)
+func (s *State) unitRows(shown map[SubjectID]bool) []UnitRow {
+	timers := s.timers()
 	var services []Unit
 	for _, u := range s.Units {
-		if u.IsTimer() {
-			// Two timers can start the same service. Keep the one due first,
-			// since that is the answer to "when does this next run"; picking
-			// arbitrarily would make the display depend on map ordering.
-			if u.Triggers == "" {
-				continue
-			}
-			if prev, ok := timers[u.Triggers]; ok && sooner(prev.NextElapse, u.NextElapse) {
-				continue
-			}
-			timers[u.Triggers] = u
-			continue
+		if !u.IsTimer() && !shown[serviceID(u)] {
+			services = append(services, u)
 		}
-		// A unit whose process is already on screen would otherwise be
-		// described twice, and the two descriptions would say the same thing in
-		// different words: "up 14h40m" against "running for 14h40m". The
-		// process line wins, because it carries the throughput; what only the
-		// unit knows -- its journal errors -- goes there instead.
-		if shown[u.Name] {
-			continue
-		}
-		services = append(services, u)
 	}
 
 	// Timers whose service was not itself reported still deserve a line.
 	for target, t := range timers {
 		if !shown[target] && !hasUnit(services, target) {
-			services = append(services, Unit{Name: target, Scope: t.Scope, Source: t.Source})
+			services = append(services, Unit{Name: target.Unit, Scope: t.Scope, Source: t.Source})
 		}
 	}
 
@@ -283,9 +298,10 @@ func (s *State) unitRows(shown map[string]bool) []UnitRow {
 
 	rows := make([]UnitRow, 0, len(services))
 	for _, u := range services {
-		timer := timers[u.Name]
+		timer := timers[serviceID(u)]
 		job := s.jobForLogFile(u.LogFile)
 		rows = append(rows, UnitRow{
+			Subject: serviceID(u),
 			Unit:    u,
 			Timer:   timer,
 			Job:     job,
@@ -297,14 +313,29 @@ func (s *State) unitRows(shown map[string]bool) []UnitRow {
 }
 
 // unitsShownAsProcesses names the units already represented by a process.
-func (s *State) unitsShownAsProcesses() map[string]bool {
-	shown := make(map[string]bool)
+func (s *State) unitsShownAsProcesses() map[SubjectID]bool {
+	shown := make(map[SubjectID]bool)
 	for _, p := range s.Processes {
-		if p.Unit != "" {
-			shown[p.Unit] = true
+		if owner, ok := s.unitFor(p); ok {
+			shown[serviceID(owner)] = true
 		}
 	}
 	return shown
+}
+
+func (s *State) timers() map[SubjectID]Unit {
+	timers := make(map[SubjectID]Unit)
+	for _, u := range s.Units {
+		if !u.IsTimer() || u.Triggers == "" {
+			continue
+		}
+		key := SubjectID{Scope: u.Scope, Unit: u.Triggers}
+		if prev, ok := timers[key]; ok && (sooner(prev.NextElapse, u.NextElapse) || (prev.NextElapse.Equal(u.NextElapse) && prev.Name < u.Name)) {
+			continue
+		}
+		timers[key] = u
+	}
+	return timers
 }
 
 // orphanMounts are FUSE mounts with no live rclone process behind them. That
@@ -364,12 +395,44 @@ func (s *State) unitFor(p Process) (Unit, bool) {
 	if p.Unit == "" {
 		return Unit{}, false
 	}
-	for _, u := range s.Units {
-		if u.Name == p.Unit {
-			return u, true
+	var owner Unit
+	found := false
+	if p.UnitScope == "" && p.PID != 0 {
+		for _, u := range s.Units {
+			if u.Name != p.Unit || u.IsTimer() || u.MainPID != p.PID {
+				continue
+			}
+			if found && owner.Scope != u.Scope {
+				return Unit{}, false
+			}
+			owner, found = u, true
+		}
+		if found {
+			return owner, true
 		}
 	}
-	return Unit{}, false
+	for _, u := range s.Units {
+		if u.IsTimer() || u.Name != p.Unit || (p.UnitScope != "" && p.UnitScope != u.Scope) {
+			continue
+		}
+		if found && owner.Scope != u.Scope {
+			return Unit{}, false
+		}
+		owner, found = u, true
+	}
+	// A timer alone can establish the same scoped service representation.
+	if !found {
+		for key, timer := range s.timers() {
+			if key.Unit != p.Unit || (p.UnitScope != "" && key.Scope != p.UnitScope) {
+				continue
+			}
+			if found && owner.Scope != key.Scope {
+				return Unit{}, false
+			}
+			owner, found = Unit{Name: key.Unit, Scope: key.Scope, Source: timer.Source}, true
+		}
+	}
+	return owner, found
 }
 
 // concatLines joins two sets of log lines into a slice of its own, so a row
@@ -383,9 +446,9 @@ func concatLines(a, b []LogLine) []LogLine {
 	return append(out, b...)
 }
 
-func hasUnit(units []Unit, name string) bool {
+func hasUnit(units []Unit, id SubjectID) bool {
 	for _, u := range units {
-		if u.Name == name {
+		if serviceID(u) == id {
 			return true
 		}
 	}

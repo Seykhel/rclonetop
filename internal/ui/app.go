@@ -29,6 +29,7 @@ type Options struct {
 	Theme       *theme.Theme
 	UpdateMS    int
 	Base10      bool
+	VimKeys     bool
 	Host        string
 	ClockLayout string
 	GraphSymbol graph.Symbol
@@ -65,6 +66,15 @@ type Model struct {
 	availablePresets [10]bool
 	shownByPreset    [10]panelSet
 	framedPreset     int
+
+	selected        model.SubjectID
+	selectedProcess model.SubjectID
+	detailProcess   model.SubjectID
+	detailSubject   model.SubjectID
+	detailOpen      bool
+	detailOffset    int
+	detailAnchor    string
+	detailByte      int
 
 	helpOpen   bool
 	helpOffset int
@@ -173,6 +183,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOpen {
 			m.restoreHelpEntry(m.helpAnchor)
 		}
+		if m.detailOpen {
+			m.restoreDetailAnchor()
+		}
 		m.graphs.resize(m.graphCells(), m.opts.GraphSymbol)
 		return m, nil
 
@@ -202,13 +215,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.graphs.record(res.Snapshot.Processes)
 			}
 		}
+		m.reconcileSelection()
+		if m.detailOpen {
+			m.restoreDetailAnchor()
+		}
 		return m, waitFor(m.results)
 	}
 	return m, nil
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	binding, ok := bindingForKey(msg.String())
+	key := msg.String()
+	if m.opts.VimKeys {
+		if key == "j" {
+			key = "down"
+		}
+		if key == "k" {
+			key = "up"
+		}
+	}
+	binding, ok := bindingForKey(key)
 	if !ok {
 		return m, nil
 	}
@@ -226,7 +252,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scrollHelp(binding.action)
 		return m, nil
 	}
+	if m.detailOpen && binding.action != actionQuit {
+		if binding.action == actionEscape {
+			m.detailOpen = false
+		} else {
+			m.scrollDetail(binding.action)
+		}
+		return m, nil
+	}
 	switch binding.action {
+	case actionDetails:
+		if _, ok := findSubject(m.state.Resolve(), m.selected); ok {
+			m.detailOpen = true
+			m.detailSubject = m.selected
+			m.detailProcess = m.selectedProcess
+			m.detailOffset = 0
+			m.detailAnchor = "title"
+			m.detailByte = 0
+		}
+	case actionScrollUp:
+		m.moveSelection(-1)
+	case actionScrollDown:
+		m.moveSelection(1)
 	case actionQuit, actionEscape:
 		m.quitting = true
 		if m.cancel != nil {
@@ -349,6 +396,9 @@ func (m Model) View() string {
 	}
 	if m.helpOpen {
 		return m.renderHelp()
+	}
+	if m.detailOpen {
+		return m.renderDetail()
 	}
 	return m.monitorView()
 }

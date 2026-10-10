@@ -12,13 +12,14 @@ and documentation of the new keys.
 ## Interaction
 
 - `?` or `h` opens help. Each opening starts at the beginning.
-- `?`, `h`, or `Esc` closes help and returns to the monitor.
+- `?`, `h`, or `Esc` closes help and returns to the view that opened it.
 - `q` and `Ctrl+C` exit the application even while help is open.
-- Outside help, `Esc` retains its existing quit behavior.
+- From details, closing help restores the detail reading position.
+- Outside help, `Esc` closes details or quits from the monitor.
 - While help is open, monitor commands (`p`, `P`, panel digits, interval keys)
   are consumed without changing the monitor. Collection, clock updates, and
   graph sampling continue normally.
-- Up/Down scroll by line; Page Up/Page Down scroll by page. Scrolling stops
+- Up/Down scroll by line; `j`/`k` are aliases when Vim keys are enabled; Page Up/Page Down scroll by page. Scrolling stops
   at the beginning and end of the content.
 - Resizing preserves the currently read command entry where possible.
 
@@ -49,8 +50,10 @@ rectangle; the close and quit keys remain effective.
 
 ## Deferred work
 
-Menu, filtering, detail views, monitor navigation, and `--vim-keys` remain
-outside this issue. Help scrolling uses arrow and page keys.
+Menu and filtering remain outside this issue. Selection, details and optional
+Vim aliases are specified in [selection-detail.md](selection-detail.md).
+When a subject is selected, its identity and `Enter details` precede the footer
+priorities above.
 
 ## Verification
 
