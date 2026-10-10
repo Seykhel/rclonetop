@@ -33,8 +33,6 @@ type View struct {
 	Errors map[Source]error
 }
 
-// ProcRow is a running process together with everything known about it from
-// elsewhere.
 // SubjectID identifies a service across runs, or one lifetime of a manual process.
 // An empty ID denotes no subject. Start time protects process IDs against reuse.
 type SubjectID struct {
@@ -46,6 +44,8 @@ type SubjectID struct {
 
 func serviceID(u Unit) SubjectID { return SubjectID{Scope: u.Scope, Unit: u.Name} }
 
+// ProcRow is a running process together with everything known about it from
+// elsewhere.
 type ProcRow struct {
 	// ProcessSubject remains stable when newly collected ownership changes Subject.
 	ProcessSubject SubjectID
