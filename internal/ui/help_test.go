@@ -112,17 +112,17 @@ func TestHelpListsEveryCommandInACenteredFrame(t *testing.T) {
 			words := strings.Join(strings.Fields(view), " ")
 			for _, command := range []string{
 				"? / h Open or close help",
-				"Esc Close help; outside help, quit",
-				"Up Scroll help up by one line",
-				"Down Scroll help down by one line",
-				"PgUp Scroll help up by one page",
-				"PgDn Scroll help down by one page",
+				"Esc Close help/details; otherwise quit",
+				"Up Select previous subject; scroll help/details up",
+				"Down Select next subject; scroll help/details down",
+				"PgUp Scroll help/details up by one page",
+				"PgDn Scroll help/details down by one page",
 				"p Alternate dense and remembered framed view",
 				"P Cycle configured framed presets (enter framed from dense)",
 				"1 Toggle transfers", "2 Toggle bandwidth", "3 Toggle files", "4 Toggle status",
 				"+ / = Refresh faster (halve interval, minimum 100ms)",
 				"- / _ Refresh slower (double interval, maximum 30000ms)",
-				"q / Ctrl+C Quit, including while help is open",
+				"q / Ctrl+C Quit from monitor, help or details",
 			} {
 				if !strings.Contains(words, command) {
 					t.Fatalf("missing command %q in help:\n%s", command, view)

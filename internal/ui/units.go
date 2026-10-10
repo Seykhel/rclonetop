@@ -145,7 +145,7 @@ func (m Model) denseUnit(row model.UnitRow, width int) string {
 	line += "\n"
 	line += m.renderErrors(row.Errors, u.RecoveredAt(), width)
 
-	return line
+	return m.markSubject(row.Subject, line, width)
 }
 
 // outcomeStyle colours how a run ended. Only "successful" is good news; the

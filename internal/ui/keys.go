@@ -10,6 +10,7 @@ type keyAction uint8
 
 const (
 	actionHelp keyAction = iota
+	actionDetails
 	actionEscape
 	actionScrollUp
 	actionScrollDown
@@ -36,11 +37,13 @@ type keyBinding struct {
 func keyBindings() []keyBinding {
 	bindings := []keyBinding{
 		{actionHelp, []string{"?", "h"}, "Help", "Open or close help"},
-		{actionEscape, []string{"esc"}, "Help", "Close help; outside help, quit"},
-		{actionScrollUp, []string{"up"}, "Help", "Scroll help up by one line"},
-		{actionScrollDown, []string{"down"}, "Help", "Scroll help down by one line"},
-		{actionPageUp, []string{"pgup"}, "Help", "Scroll help up by one page"},
-		{actionPageDown, []string{"pgdown"}, "Help", "Scroll help down by one page"},
+		{actionEscape, []string{"esc"}, "Help", "Close help/details; otherwise quit"},
+		{actionScrollUp, []string{"up"}, "Help", "Select previous subject; scroll help/details up"},
+		{actionScrollDown, []string{"down"}, "Help", "Select next subject; scroll help/details down"},
+		{actionPageUp, []string{"pgup"}, "Help", "Scroll help/details up by one page"},
+		{actionPageDown, []string{"pgdown"}, "Help", "Scroll help/details down by one page"},
+		{actionDetails, []string{"enter"}, "Selection", "Open details for selected subject"},
+		{actionScrollDown, []string{"j"}, "Vim keys (--vim-keys only)", "Down alias; k is Up (h remains help)"},
 		{actionView, []string{"p"}, "Views", "Alternate dense and remembered framed view"},
 		{actionNextPreset, []string{"P"}, "Views", "Cycle configured framed presets (enter framed from dense)"},
 	}
@@ -51,11 +54,14 @@ func keyBindings() []keyBinding {
 	return append(bindings,
 		keyBinding{actionFaster, []string{"+", "="}, "Refresh (screen only; collector cadence stays the same)", "Refresh faster (halve interval, minimum 100ms)"},
 		keyBinding{actionSlower, []string{"-", "_"}, "Refresh (screen only; collector cadence stays the same)", "Refresh slower (double interval, maximum 30000ms)"},
-		keyBinding{actionQuit, []string{"q", "ctrl+c"}, "Quit", "Quit, including while help is open"})
+		keyBinding{actionQuit, []string{"q", "ctrl+c"}, "Quit", "Quit from monitor, help or details"})
 }
 
 func bindingForKey(key string) (keyBinding, bool) {
 	for _, binding := range keyBindings() {
+		if binding.group == "Vim keys (--vim-keys only)" {
+			continue
+		}
 		for _, accepted := range binding.keys {
 			if accepted == key {
 				return binding, true
